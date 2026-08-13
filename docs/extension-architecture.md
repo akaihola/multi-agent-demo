@@ -73,13 +73,10 @@ Useful native pieces include:
 - `EventTarget` / `CustomEvent` for simple notifications;
 - `AbortController` / `AbortSignal` for lifecycle cancellation;
 - `Blob` URLs where runtime-created module resources are useful;
-- Web Workers for isolated non-DOM execution;
-- sandboxed iframes for stronger browser-origin isolation patterns;
-- `postMessage()` for capability-oriented communication across isolation boundaries;
-- IndexedDB for persistent extension packages;
+- IndexedDB for persistent extension source;
 - DOM elements and `<template>` for UI contributions.
 
-The extension API should compose these primitives rather than replacing them with an elaborate framework.
+The extension API should compose these primitives rather than replacing them with an elaborate framework. A model implementation may independently use a Worker for computation, but the extension itself remains a trusted same-realm ES module.
 
 ## Relationship to the v0 implementation contract
 
@@ -91,7 +88,7 @@ Use three concepts:
 
 ```text
 HOST
-  owns lifecycle, registry, permissions, storage, contribution points
+  owns lifecycle, registry, trust state, storage, contribution points
 
 EXTENSION
   activates against a small host API and registers contributions
@@ -166,7 +163,7 @@ api.storage
 api.commands
 ```
 
-An extension should only see the capabilities it needs. This helps comprehension immediately and leaves room for a future permission/sandbox system.
+An extension should receive only the capabilities it needs. This improves comprehension and discourages accidental coupling, but it is not permission enforcement: same-realm code can bypass the API boundary.
 
 The API object can even be constructed per extension so capabilities can later be withheld or proxied.
 
@@ -305,7 +302,6 @@ The frozen v0 minimum is:
 Possible future fields:
 
 - description;
-- requested permissions;
 - entry point;
 - integrity/hash/signature;
 - dependencies;
@@ -336,63 +332,39 @@ The longer-term experiment is unusually interesting:
 
 1. the application can expose its extension API documentation to a language model;
 2. the model proposes JavaScript implementing an extension;
-3. the user can inspect the code;
+3. the user inspects the source and provenance;
 4. the extension can be stored locally;
-5. the user explicitly activates it;
+5. the user explicitly trusts and activates it;
 6. the extension can be exported as text and imported into another instance.
 
 This turns extension source code itself into a portable artifact.
 
 The important architectural choice is that generated code extends the app **through the same public API**. The model should not need to patch core source code or depend on private DOM structure.
 
-## Do not make `eval()` the plugin system
+## Chosen runtime: trusted same-realm ES modules
 
-Executing arbitrary JavaScript with `eval()` or `new Function()` in the page's main realm gives that code essentially the same authority as the application itself. It can access the DOM, monkey-patch globals, inspect in-page secrets, and bypass the intended API.
-
-For trusted local experiments this may be acceptable as an explicit "unsafe" mode, but it is not an isolation boundary.
-
-For imported or generated code, research these options:
-
-### Web Worker
+All extensions in this demo use trusted ES modules executing in the application's main realm. This applies to built-ins and, later, imported or LLM-generated extensions. The decision is recorded in `docs/decisions/2026-08-13-trusted-same-realm-extensions.md`.
 
 Advantages:
 
-- separate global realm;
-- no direct DOM access;
-- natural message-passing boundary;
-- good for providers, tools, transformations, and computation.
+- the smallest and most browser-native implementation;
+- direct use of native modules and the DOM;
+- one extension API for model, tool, and UI contributions;
+- portable source that humans and language models can understand;
+- no proxied UI framework or cross-realm message protocol.
 
-Disadvantages:
+Consequences:
 
-- UI extensions need a declarative/proxied UI API or a different execution mode;
-- not a complete security sandbox if powerful network/storage capabilities are handed through carelessly.
+- extensions have the page's effective authority;
+- the host API is an architectural contract, not a security boundary;
+- an extension can inspect DOM and JavaScript state, access in-page credentials, make network requests, and monkey-patch globals;
+- there is no untrusted, sandboxed, or permission-restricted extension tier in this demo;
+- imported and generated source must be reviewed and explicitly trusted before activation;
+- dependency provenance matters as much as the top-level extension source.
 
-### Sandboxed iframe
+Do not use `eval()` or `new Function()` as the plugin system. Load trusted code as ES modules. A later import mechanism may use dynamic `import()` and a module URL, but that mechanism does not reduce the module's authority.
 
-Advantages:
-
-- browser-enforced document isolation options;
-- can host UI;
-- communicates through `postMessage()`.
-
-Disadvantages:
-
-- more lifecycle/layout complexity;
-- permissions and CSP/origin details need careful design.
-
-### Trusted same-realm ES module
-
-Advantages:
-
-- by far the simplest;
-- native modules and DOM access;
-- ideal for built-ins and explicitly trusted developer extensions.
-
-Disadvantages:
-
-- no meaningful isolation from the host.
-
-A sensible long-term design may support more than one trust tier rather than forcing all extensions through the same runtime.
+Workers or iframes may still be implementation details of a model runtime or an unrelated feature. They are not alternative extension runtimes for this demo.
 
 ## Import/export format
 
@@ -407,7 +379,7 @@ That has attractive properties:
 - native module semantics;
 - source itself is the artifact.
 
-If metadata must be inspected before code execution, either use a tiny separate JSON envelope or a constrained metadata header. Do not parse arbitrary JavaScript just to discover permissions.
+If metadata must be inspected before code execution, either use a tiny separate JSON envelope or a constrained metadata header. Do not execute arbitrary JavaScript merely to discover identity, provenance, or compatibility metadata.
 
 This decision can wait until runtime extensions are implemented.
 
@@ -467,7 +439,7 @@ Do not implement these in the first extension-host milestone:
 - background auto-update;
 - LLM-generated code execution;
 - sophisticated permission prompts;
-- full sandboxed UI framework.
+- sandboxed extension runtimes or a proxied UI framework.
 
 The first milestone needs only enough architecture to prove that built-in features can genuinely dogfood a tiny extension API.
 
@@ -507,6 +479,6 @@ Do **not** adopt a large existing JavaScript plugin framework yet. Adopt the pro
 
 > **manifest + `activate(api)` + explicit registries/contribution points + disposables + deterministic unload**
 
-That is small enough to understand, flexible enough for the known roadmap, and naturally compatible with future portable or LLM-generated extensions.
+Implement that shape with trusted same-realm ES modules. It is small enough to understand, flexible enough for the known roadmap, and naturally compatible with future portable or LLM-generated extensions that the user explicitly reviews and trusts.
 
 The burden of proof should be on every additional abstraction.
