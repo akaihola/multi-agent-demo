@@ -13,7 +13,6 @@ Before making substantial architectural or UI decisions, browse the source of th
 - **Viewport Preview** — https://github.com/simonw/viewport-preview — an especially small and legible example of a complete browser application in one HTML file.
 - **LLM Prices** — https://github.com/simonw/llm-prices — a larger static application showing how substantial interactive behavior can remain browser-native and framework-free.
 - **Gist Preview** — https://github.com/simonw/gistpreview.github.io — useful counterexample to one-file purity: a tiny static application that separates JavaScript into `main.js` while retaining a very simple architecture.
-- **OpenAI WebRTC tool source** — https://github.com/simonw/tools/blob/main/openai-webrtc.html — relevant mainly as an example of a comparatively substantial browser application, direct API credential entry, explicit state/status UI, and plain JavaScript. **Do not copy its voice/WebRTC functionality; voice is out of scope for this project.**
 
 Treat these as source-reading references, not templates to copy mechanically. Look for recurring decisions: how little machinery is required, when code stays inline versus splits into modules, how browser APIs are used directly, how errors/loading are represented, and how the deployed source remains inspectable.
 
@@ -21,13 +20,12 @@ The goal is not to imitate Simon's visual styling. It is to copy the properties 
 
 The project-specific architecture has evolved since this document was first written. In particular:
 
-- voice/audio is no longer in scope;
 - the first interaction is **one prompt / one response**, not chat;
-- streaming is deliberately postponed until after multi-provider and browser-local model support;
+- incremental token/chunk response display is later-version work, outside the current staged plan;
 - multi-agent behavior is postponed beyond the initial demo;
 - the application is now intentionally **extension-first**: built-in features should dogfood a very small public extension API wherever practical.
 
-Those decisions are documented in `technical-direction.md` and `extension-architecture.md` and take precedence over older assumptions about the POC.
+Those decisions are documented in `implementation-contract-v0.md`, `technical-direction.md`, and `extension-architecture.md`. For Stage 0, the implementation contract takes precedence.
 
 ## 1. Start with the browser platform
 
@@ -119,8 +117,6 @@ Test real browser requests early. Keep CORS failures understandable. Plain `fetc
 
 ## 8. BYOK should be explicit and conservative
 
-`openai-webrtc.html` provides a relevant precedent for accepting a user-supplied OpenAI token directly in browser UI, though this project no longer intends to implement its audio/WebRTC behavior.
-
 For this project:
 
 - credentials belong to the user;
@@ -185,7 +181,7 @@ enter prompt
   -> restore controls
 ```
 
-No transcript, conversation reducer, chat state, or streaming machinery is required initially.
+No transcript, conversation reducer, retained chat state, tool loop, or incremental response machinery is required initially.
 
 The extension host may use a small event mechanism because extension lifecycle and observation are now explicit architectural requirements. This is different from introducing a generalized application-wide event-bus framework. Prefer native `EventTarget`/`CustomEvent` and explicit registries; use events for observation rather than turning every operation into an event protocol.
 
@@ -199,7 +195,6 @@ Represent asynchronous states plainly:
 - CORS/network errors;
 - rate limits;
 - provider errors;
-- later, streaming interruption.
 
 Do not hide operationally important information in the developer console.
 
@@ -225,33 +220,34 @@ An extension should ideally be understandable from a short example such as:
 
 ```js
 export function activate(api) {
-  return api.models.register({
+  api.models.register({
     id: 'example:model',
     label: 'Example',
+    providerId: 'example',
+    providerLabel: 'Example',
+    credential: null,
     generate: async ({ prompt }) => ({ text: prompt.toUpperCase() })
-  }).dispose;
+  });
 }
 ```
 
-(The exact API is still to be designed.)
+The host owns the registration and disposes it on unload. The exact v0 API is defined in `implementation-contract-v0.md`.
 
 ## 17. Progressive complexity: current sequence
 
 The current sequence is:
 
-1. tiny extension-host walking skeleton;
-2. one hosted provider, one prompt, one response;
+1. fake-model extension-host walking skeleton;
+2. one hosted provider, one prompt, one completed response;
 3. second hosted provider / abstraction bake-off;
 4. one browser-local WebGPU model;
-5. streaming;
-6. simple tools as extensions;
-7. conversation/multi-turn state only if useful;
-8. later, portable/importable/LLM-generated extensions;
-9. multi-agent orchestration only in a future version.
+5. simple tools as extensions;
+6. conversation/multi-turn state only if useful;
+7. later, portable/importable/LLM-generated extensions.
 
-Each step should leave the application runnable and understandable.
+Incremental token/chunk response display and multi-agent orchestration belong to later versions, outside this sequence.
 
-This sequence deliberately postpones streaming even if a selected library offers it immediately. The point is to introduce one architectural complication at a time.
+Each step should leave the application runnable and understandable. The point is to introduce one architectural complication at a time.
 
 ## 18. Built-ins should dogfood the extension API
 
@@ -281,8 +277,6 @@ Early Playwright coverage should include:
 - local-model compatibility/loading where practical.
 
 Most tests should use fake providers/extensions. A tiny optional real-API suite can exist later if useful.
-
-There is no need for voice/audio testing because voice is out of scope.
 
 ## 20. Keep deployment boring
 
@@ -324,7 +318,6 @@ Failed spikes are useful project knowledge.
 - `simonw/tools` index/colophon machinery;
 - localStorage credential persistence merely because some personal tools use it;
 - every browser capability just because it exists;
-- audio/WebRTC functionality from `openai-webrtc.html`;
 - repository machinery unrelated to this experiment.
 
 ## The project-specific synthesis
