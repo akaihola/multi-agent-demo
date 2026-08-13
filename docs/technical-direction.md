@@ -147,11 +147,82 @@ const result = await model.generate(messages)
 
 regardless of whether `model` ultimately means a browser-local WebGPU model or a hosted API.
 
-Writing `fetch()` adapters for every provider would be straightforward, but it is not the interesting part of this project and would immediately create maintenance work. The POC should therefore first test existing libraries.
+Writing `fetch()` adapters for every provider would be straightforward, but it is not the interesting part of this project and would immediately create maintenance work. The POC should therefore test existing libraries rather than assuming Vercel AI SDK is the only candidate.
 
-## Vercel AI SDK
+## Browser-oriented multi-provider abstraction candidates
 
-[Vercel AI SDK](https://ai-sdk.dev/) is currently the most interesting general abstraction to investigate first.
+This is an important part of the experiment. Several smaller projects are much closer to our exact architecture than the larger server/full-stack-oriented AI frameworks. They should be evaluated explicitly.
+
+### ClientAgentJS
+
+[ClientAgentJS](https://github.com/FranBarInstance/ClientAgentJS) may be the closest conceptual match to this POC.
+
+It is deliberately designed as a plain browser-side JavaScript library for connecting directly to user-selected AI providers **without a backend**. Its author describes support for OpenAI, Anthropic, Google and local Ollama behind a unified interface, plus MCP support. It has no external dependencies or transpilation requirement and is intended to work from an ordinary web server or even `file://` where the target provider's CORS policy permits it.
+
+Particularly relevant details:
+
+- browser-first rather than server-first architecture;
+- unified provider interface;
+- BYOK is a primary use case rather than an escape hatch;
+- handles provider-specific browser details such as Anthropic's direct-browser-access header;
+- plain JavaScript and deliberately small deployment story;
+- local Ollama support provides another kind of local model, although it is not the same as in-browser WebGPU inference;
+- MCP support could become useful later, but is not needed for the POC.
+
+Questions / limitations to investigate:
+
+- exact current provider coverage and maintenance maturity;
+- whether OpenAI direct-browser access works with the current OpenAI API/SDK situation;
+- streaming and normalized error behavior;
+- how easy it is to add WebLLM as another provider;
+- whether its agent/MCP functionality adds unnecessary conceptual weight for a minimal chat demo.
+
+**POC relevance: very high.** This should be spiked alongside Vercel AI SDK rather than omitted in favor of the larger framework.
+
+### BundleLLM
+
+[BundleLLM](https://github.com/AlexanderDewhirst/bundle-llm-sdk) is another unusually close match. It was created as a browser SDK where the **user connects their own LLM provider** and chat traffic goes directly from browser to provider rather than through the application developer's backend.
+
+Its published design includes OpenRouter authorization via OAuth and Anthropic via a user-supplied API key, with an event-driven SDK and an optional ready-made widget/UI.
+
+Why it is interesting here:
+
+- browser/BYOK is the central architecture;
+- includes a delegated OAuth path, which is especially relevant to our earlier discussion about avoiding pasted API keys where possible;
+- can supply either SDK primitives or more UI out of the box;
+- proves that the browser-only provider model is useful enough to package as a reusable library.
+
+Questions / limitations:
+
+- provider coverage is narrower than a general multi-provider framework;
+- OpenRouter OAuth introduces a provider/router dependency rather than direct access to every underlying vendor;
+- credentials are reportedly persisted in browser storage by default, whereas this POC may prefer memory-only keys initially;
+- it does not by itself solve in-browser WebGPU models, so WebLLM would still need integration beside or beneath it.
+
+**POC relevance: high**, especially as a comparison point for the OAuth/BYOK user experience.
+
+### `@livx.cc/ask`
+
+[`@livx.cc/ask`](https://www.npmjs.com/package/@livx.cc/ask) describes itself as a multi-LLM interface with a browser-compatible client-side SDK. It supports a much broader list of hosted providers (including OpenAI, Anthropic, Google, Groq, Mistral, OpenRouter, Cohere, xAI, DeepSeek, AI21 and Cloudflare) through a unified interface.
+
+Why it is worth checking:
+
+- broad provider coverage;
+- explicitly advertises client-side SDK use;
+- streaming and non-streaming support;
+- may demonstrate how little provider-selection glue our POC actually needs.
+
+Questions:
+
+- whether each advertised provider is truly callable directly from a static browser under current CORS policies, as opposed to the package merely being browser-compatible when pointed at an intermediary;
+- package size and dependency footprint;
+- whether its broader CLI/server feature set makes it unnecessarily large for this project.
+
+**POC relevance: medium/high pending a browser-only test.**
+
+### Vercel AI SDK
+
+[Vercel AI SDK](https://ai-sdk.dev/) remains the most mature general abstraction to investigate.
 
 Why it is attractive:
 
@@ -171,6 +242,29 @@ Questions to answer with a spike:
 - Does the resulting bundle remain reasonable for a deliberately tiny demo?
 
 The AI SDK is often demonstrated in full-stack applications, so we should verify browser-only behavior rather than infer it from server-oriented examples.
+
+**POC relevance: very high**, especially because it may be the only candidate in this list that can naturally put hosted providers and WebGPU models behind essentially the same abstraction.
+
+### Other multi-provider libraries and frameworks
+
+There are many broader abstractions — for example LangChain.js and numerous OpenAI-compatible clients — but most are not optimized for this project's unusual combination of **static-only + direct browser BYOK + local WebGPU**. Gateways such as LiteLLM, OpenRouter, Portkey and similar systems solve multi-provider routing very effectively, but introduce a server/gateway intermediary and therefore do not prove the architectural point of this POC.
+
+They remain useful reference designs, but should not be mistaken for drop-in solutions to the strict no-backend requirement.
+
+The search for smaller browser-first libraries should remain open. ClientAgentJS and BundleLLM are evidence that this niche is active and that choosing only the largest mainstream abstraction would be premature.
+
+## Abstraction comparison for the POC
+
+| Candidate | Browser-first | Multiple hosted providers | Direct BYOK | OAuth option | Browser-local WebGPU | Fit for tiny static POC |
+| --- | --- | --- | --- | --- | --- | --- |
+| ClientAgentJS | Yes | Yes | Yes | Not primary | Not currently the core feature | **Very high** |
+| BundleLLM | Yes | Limited / via OpenRouter | Yes | Yes, OpenRouter | No | **High** |
+| `@livx.cc/ask` | Advertised | Yes, broad | Needs verification per provider | Not central | No | **Medium/high** |
+| Vercel AI SDK | Not specifically | Yes, broad | Possible, browser behavior must be verified | Provider-dependent | Yes via Browser AI provider | **Very high** |
+| Official provider SDKs | Provider-specific | No | Often possible with explicit browser opt-in | Provider-dependent | No | Medium fallback |
+| Plain `fetch()` | Yes | Only what we implement | Yes where CORS allows | We implement it | No | Low as abstraction, high as diagnostic fallback |
+
+This table describes architectural fit, not a final library choice. A short implementation spike is more valuable than deciding from documentation alone.
 
 ## Direct official SDKs
 
@@ -201,40 +295,47 @@ Use it for diagnosis or for a provider whose SDK causes browser problems, not as
 
 ## Candidate first implementation
 
-The first technical spike should try this stack:
+Rather than prematurely selecting Vercel AI SDK, the first technical work should be a **small bake-off**. Implement the same trivial one-turn chat path with the smallest possible code using:
+
+1. **ClientAgentJS** for hosted direct-BYOK providers;
+2. **Vercel AI SDK** for hosted providers, and test its Browser AI provider with WebLLM;
+3. **BundleLLM** to evaluate its browser-native BYOK/OAuth experience;
+4. optionally **`@livx.cc/ask`** if its direct-browser claims survive a quick CORS test.
+
+The winner should be determined primarily by how much application-specific code and machinery it requires under the strict static-only constraint, not by framework popularity.
+
+An especially attractive outcome would be:
 
 ```text
 Static app
   |
-  +-- Vercel AI SDK common API
+  +-- one common model API
         |
-        +-- hosted provider package (BYOK)
-        |
-        +-- second hosted provider package (BYOK)
-        |
-        +-- Browser AI provider
+        +-- hosted provider A (BYOK)
+        +-- hosted provider B (BYOK/OAuth)
+        +-- browser-local provider
                 |
                 +-- WebLLM
 ```
 
-If the Browser AI provider introduces friction, simplify to:
+If no existing abstraction handles both sides elegantly, the next-best architecture is still small:
 
 ```text
 Static app
   |
-  +-- Vercel AI SDK --> hosted providers
+  +-- browser-first multi-provider library --> hosted providers
   |
-  +-- WebLLM --------> browser model
+  +-- WebLLM -------------------------------> browser model
 ```
 
-Only if the AI SDK itself proves awkward in a pure browser environment should we fall back to official provider SDKs or tiny handwritten adapters.
+Only if those approaches prove awkward should we fall back to official provider SDKs or tiny handwritten adapters.
 
 ## Suggested POC scope
 
 The first working version should resist feature creep. A reasonable target is one page containing:
 
 - model/provider selector;
-- API-key field shown only when required;
+- API-key or authorization control shown only when required;
 - tiny transcript area;
 - prompt input;
 - Send button;
@@ -247,7 +348,7 @@ A good initial model matrix would be:
 | --- | --- |
 | One small WebLLM model | Prove fully local browser inference |
 | Anthropic | Prove direct hosted-provider BYOK |
-| OpenAI or another CORS-capable provider | Prove that hosted providers are interchangeable |
+| OpenAI, Google, OpenRouter, or another browser-capable provider | Prove that hosted providers are interchangeable |
 
 Exact providers and model names should be selected during implementation based on current browser/CORS support rather than hard-coded into the architecture document.
 
@@ -259,7 +360,7 @@ Do not initially add:
 - accounts;
 - database or conversation persistence;
 - complex settings;
-- provider plugin framework;
+- our own provider plugin framework;
 - agent/tool execution;
 - MCP;
 - RAG;
@@ -281,7 +382,7 @@ There are two separate goals which should not be conflated:
 
 The first is a core requirement. The second is optional.
 
-If Vite or another tiny build setup makes npm dependencies, modules, workers, and WebGPU libraries dramatically easier to use, that is a reasonable trade. The output can still be ordinary static HTML/JS/CSS deployable anywhere.
+ClientAgentJS is interesting partly because it aims at plain JavaScript with no transpilation. Conversely, if Vite or another tiny build setup makes npm dependencies, workers, and WebGPU libraries dramatically easier to use, that is also a reasonable trade. The output can still be ordinary static HTML/JS/CSS deployable anywhere.
 
 For the earliest experiment, prefer the smallest setup that the chosen libraries support reliably.
 
@@ -327,8 +428,8 @@ The prototype is successful if it gives concrete answers to these questions:
 1. Can one static application genuinely support both browser-local and remote hosted LLMs?
 2. Which mainstream providers can currently be called directly from browsers?
 3. How safe and understandable can BYOK be made without a backend?
-4. Can an existing JS abstraction hide most provider differences?
-5. Can that same abstraction include WebGPU inference?
+4. Which existing browser-capable multi-provider library minimizes our own glue code?
+5. Can the same abstraction include WebGPU inference, or is a tiny two-path architecture cleaner?
 6. How small can the application-specific code actually become?
 7. What is the smallest local model that still makes the demo feel useful on an average laptop?
 8. Are browser compatibility and CORS limitations small enough that this is useful beyond a technical demo?
@@ -342,10 +443,10 @@ The first milestone should be intentionally narrow:
 Implementation order:
 
 1. Establish the smallest static project/build setup.
-2. Spike Vercel AI SDK + Browser AI/WebLLM.
-3. Make one small local model answer a prompt.
-4. Add one hosted provider with a user-entered API key.
-5. Put both behind one model selector and one chat path.
+2. Run a tiny hosted-provider bake-off: ClientAgentJS vs Vercel AI SDK, with BundleLLM and `@livx.cc/ask` as additional candidates.
+3. Spike Browser AI/WebLLM and make one small local model answer a prompt.
+4. Choose the abstraction based on actual browser-only simplicity rather than ecosystem size.
+5. Put one local and one hosted model behind one selector and one chat path.
 6. Add a second hosted provider to verify that the abstraction is genuinely reusable.
 7. Measure the amount of application-specific code and simplify it.
 
