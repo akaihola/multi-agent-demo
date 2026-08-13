@@ -2,443 +2,326 @@
 
 ## Purpose
 
-This document defines implementation guidelines for `multi-agent-demo` based on recurring patterns in Simon Willison's static HTML/JavaScript applications, especially `simonw/tools`, and cross-checks those patterns against standalone repositories such as `simonw/llm-prices`, `simonw/viewport-preview`, and `simonw/gistpreview.github.io`.
+These guidelines capture recurring engineering patterns from Simon Willison's static HTML/JavaScript applications and apply them to this repository.
 
-The goal is not to imitate incidental visual details. It is to adopt the engineering style that makes these applications unusually easy to understand, modify, self-host, and hand to a coding agent.
+The primary references examined were `simonw/tools`, its `TOOLS_GUIDE.md`, `openai-webrtc.html`, `simonw/llm-prices`, `simonw/viewport-preview`, and `simonw/gistpreview.github.io`.
 
-For this project, the most important consequence is:
+The goal is not to imitate Simon's visual styling. It is to copy the properties that make these applications easy to inspect, hack on, self-host, test, and hand to a coding agent.
 
-> Prefer a small, browser-native application that can be understood by opening its HTML file over a conventional frontend application with a framework, package graph, build pipeline, and backend.
+The project-specific architecture has evolved since this document was first written. In particular:
 
-This aligns closely with the existing technical direction of `multi-agent-demo`: static deployment, no application backend, browser execution, BYOK credentials, minimal glue code, and no premature abstraction.
+- voice/audio is no longer in scope;
+- the first interaction is **one prompt / one response**, not chat;
+- streaming is deliberately postponed until after multi-provider and browser-local model support;
+- multi-agent behavior is postponed beyond the initial demo;
+- the application is now intentionally **extension-first**: built-in features should dogfood a very small public extension API wherever practical.
 
-## Sources examined
+Those decisions are documented in `technical-direction.md` and `extension-architecture.md` and take precedence over older assumptions about the POC.
 
-The main reference is Simon's `simonw/tools` repository. It contains more than 200 browser tools and even includes a repository guide documenting its common structures and patterns. Representative code examined includes `openai-webrtc.html`, which is particularly relevant because it calls an LLM API from a browser and handles a user-supplied API token.
+## 1. Start with the browser platform
 
-Standalone repositories were used to distinguish general Simon Willison patterns from conventions that exist only because `tools` contains hundreds of utilities:
+Use ordinary HTML, CSS, JavaScript, and browser APIs by default.
 
-- `simonw/tools` — the main corpus of single-file HTML tools.
-- `simonw/llm-prices` — a larger static browser application with a substantial `index.html` and data files.
-- `simonw/viewport-preview` — an extremely small standalone application whose entire implementation is one `index.html`.
-- `simonw/gistpreview.github.io` — an example where JavaScript is split into `main.js`, showing that single-file HTML is a strong preference rather than an absolute rule.
-- Simon's December 2025 article, **Useful patterns for building HTML tools**, which explicitly explains the reasoning behind many of these choices.
+Do not introduce React, Vue, Svelte, Next.js, a component framework, or a bundler simply because the application is interactive. A framework should earn its existence by solving a demonstrated problem.
 
-## 1. Start with the browser platform, not a frontend framework
-
-Use ordinary HTML, CSS, and JavaScript by default.
-
-Do not introduce React, Vue, Svelte, Next.js, a component framework, or an application bundler merely because this is an interactive application. Simon explicitly values the absence of a build step because it improves hacking speed, portability, inspectability, and self-hosting.
-
-For `multi-agent-demo`, the default implementation should therefore be something that a developer can serve with a trivial static HTTP server and inspect directly in the repository.
-
-A framework should only be introduced if a concrete requirement demonstrates that browser-native code has become materially harder to maintain.
-
-## 2. Prefer a single HTML entry point
-
-The characteristic Simon-style tool combines markup, CSS, and JavaScript in one HTML file. `simonw/tools` does this extensively; `viewport-preview` is a particularly clear standalone example.
-
-For the first POC, prefer:
-
-```text
-index.html
-```
-
-with CSS in `<style>` and application JavaScript in `<script>` or `<script type="module">`.
-
-This has useful properties:
-
-- the entire application can be read in one pass;
-- there is no module graph to reconstruct before understanding it;
-- copying or self-hosting the application is trivial;
-- an LLM coding agent can inspect and edit the complete UI and behavior with minimal context gathering;
-- deployment is simply static file hosting.
-
-This is a preference, not a purity test. `gistpreview.github.io` demonstrates that Simon will split JavaScript into a separate file when useful. If `multi-agent-demo` grows enough that a single file actively harms clarity, split along obvious boundaries rather than adopting a framework.
-
-## 3. No build step unless it earns its existence
-
-The browser should consume the source files directly whenever practical.
-
-Avoid requiring:
-
-- npm installation just to run the app;
-- Vite/Webpack/Rollup for ordinary application code;
-- transpilation;
-- generated JavaScript bundles;
-- framework-specific development servers.
-
-A developer should ideally be able to run:
+The ideal local development loop remains something as simple as:
 
 ```bash
 python -m http.server
 ```
 
-and open the application.
+## 2. Single HTML file is a preference, not a rule
 
-This constraint should influence library selection. A library that is technically excellent but requires a substantial Node/bundling toolchain is less aligned with this project than a slightly smaller browser-native alternative.
+Many Simon tools are complete single HTML files. `viewport-preview` is a particularly clear example. But `gistpreview.github.io` splits JavaScript into `main.js`, and larger static applications use multiple assets.
 
-## 4. Load dependencies directly from versioned CDN URLs
+For this project, do not force everything into `index.html` once natural architectural boundaries exist.
 
-Simon commonly loads third-party JavaScript from cdnjs or jsDelivr, including ES-module imports from `+esm` endpoints. His tools use this for libraries ranging from Marked and PDF.js to Pyodide, SQLite WASM, and MicroPython.
-
-For `multi-agent-demo`, prefer dependencies that can be used like:
-
-```html
-<script type="module">
-  import something from "https://cdn.jsdelivr.net/npm/package@VERSION/+esm";
-</script>
-```
-
-or with a versioned ordinary `<script src="...">`.
-
-Guidelines:
-
-- pin versions rather than silently following `latest`;
-- prefer well-established CDNs;
-- prefer libraries that publish browser-ready ESM;
-- keep the number of dependencies small;
-- do not introduce npm solely to retrieve a dependency that the browser can load itself.
-
-This is especially important in the provider-abstraction bake-off: browser-first libraries deserve extra weight if they can be imported directly without a build pipeline.
-
-## 5. Let the application remain genuinely static
-
-Static hosting is not merely a deployment optimization; it is part of the architecture.
-
-The normal application should require no server-side runtime. GitHub Pages or any ordinary static web host should be sufficient.
-
-Simon does use tiny server-side components when browser security rules make them genuinely unavoidable — OAuth client secrets are one example — but treats those as explicit exceptions rather than a default architecture.
-
-For `multi-agent-demo`, preserve the existing stronger rule for the POC: **no application backend at all**. If a future capability requires one, isolate it and document exactly why browser-only implementation is impossible.
-
-## 6. Use direct browser APIs enthusiastically
-
-A recurring characteristic of Simon's tools is willingness to use what modern browsers already provide instead of reaching for libraries or servers.
-
-Relevant APIs and techniques include:
-
-- `fetch()` for CORS-enabled HTTP APIs;
-- `navigator.clipboard` for copy/paste workflows;
-- `<input type="file">`, `File`, `Blob`, and object URLs for local files;
-- URL query parameters and fragments for state;
-- `localStorage` for larger persistent state;
-- WebRTC where appropriate;
-- WebAssembly and WebGPU for capabilities that historically required native/server software;
-- generated `Blob`s and download links for browser-created files.
-
-For this project specifically, direct browser `fetch()`, WebGPU/WebLLM, browser storage, and URL state should be considered first-class architecture tools.
-
-## 7. Treat CORS as an architectural capability boundary
-
-Simon repeatedly exploits APIs that deliberately support cross-origin browser access. He has even built tools specifically for investigating CORS behavior.
-
-For a backend-free LLM application, CORS support is not a minor implementation detail: it determines whether a provider belongs in the direct-browser architecture at all.
-
-Therefore:
-
-- test real browser requests early;
-- do not infer browser support merely because a JavaScript SDK exists;
-- distinguish SDK browser compatibility from API CORS compatibility;
-- keep provider failures visible and understandable;
-- prefer providers and abstractions that work directly under normal browser security rules.
-
-A tiny diagnostic implementation using plain `fetch()` is acceptable when determining whether a provider works, even if the final application uses a higher-level abstraction.
-
-## 8. BYOK fits the pattern, but make the security boundary explicit
-
-`openai-webrtc.html` is a useful precedent: it accepts an OpenAI API token directly in a password field and uses it from browser JavaScript.
-
-For `multi-agent-demo`, BYOK should similarly be simple and transparent:
-
-- use `<input type="password">` for credentials;
-- make it clear that the key is used by code running in the browser;
-- never embed an application-owner secret in static source;
-- initially keep keys in memory unless persistence is an intentional feature;
-- if keys are persisted later, make that visible to the user and provide a clear way to remove them.
-
-Simon notes that `localStorage` can be useful for secrets or larger state in personal HTML tools. Our POC should be more conservative initially because it is explicitly demonstrating third-party LLM credentials: memory-only is a better default, with opt-in persistence as a possible later convenience.
-
-## 9. Make useful state linkable when it is safe to do so
-
-Simon frequently stores tool state in query parameters or URL fragments. This makes a static application surprisingly powerful: a URL can reproduce a useful configuration without a database or account system.
-
-For `multi-agent-demo`, good candidates include:
-
-- selected provider;
-- selected model;
-- non-sensitive UI options;
-- possibly prompts or conversation examples when explicitly requested by the user.
-
-Never put API keys or other secrets in URLs. URLs leak through browser history, logs, screenshots, referrers, and copy/paste.
-
-Prefer fragments for client-only shareable state where that provides a useful privacy or implementation property, and query parameters when ordinary URL semantics are preferable.
-
-## 10. Keep the UI conventional and functional
-
-The visual style across Simon's tools varies, but the structural pattern is consistent: straightforward forms, semantic labels, ordinary buttons, obvious status areas, centered content, and responsive layouts.
-
-Common details include:
-
-- `<meta name="viewport">`;
-- global `box-sizing: border-box`;
-- a centered `max-width` container;
-- 16px-ish form controls that remain usable on mobile;
-- labels connected to inputs;
-- simple responsive grid/flex layouts;
-- media queries where needed;
-- disabled buttons during unavailable/loading states;
-- explicit success/error/status messages;
-- visible focus states and basic accessibility semantics.
-
-Do not spend early POC effort building a design system. A small amount of local CSS is preferable to adding a UI framework.
-
-## 11. Design mobile behavior deliberately
-
-Mobile support is not an afterthought in these tools. Layouts generally collapse naturally to one column and controls are kept large and simple.
-
-For the chat POC:
-
-- make the default layout work at phone width before adding desktop enhancements;
-- keep provider/model selection and credential entry usable without horizontal scrolling;
-- make the transcript readable on a narrow screen;
-- keep the composer easy to reach and operate;
-- ensure loading/download states for browser models remain understandable on mobile;
-- test long model names, errors, and generated text for overflow.
-
-A desktop-only multi-column layout should not be the starting point.
-
-## 12. Favor immediate, direct interactions
-
-Many Simon tools react directly to `input`, `change`, paste, drop, or button events. State management is normally just JavaScript variables plus the DOM rather than a separate state framework.
-
-For `multi-agent-demo`, keep the interaction model equally explicit:
+A small set of native ES modules is fully consistent with the Simon style:
 
 ```text
-user selects model
-  -> update credential/loading controls
-user submits prompt
-  -> disable/send loading state
-  -> call selected model
-  -> stream/update transcript
-  -> restore controls or show error
+index.html
+app.js
+host/extensions.js
+extensions/prompt-ui.js
+extensions/provider-example.js
 ```
 
-Do not add a global store, reducer architecture, event bus, or dependency injection system until a real problem requires one.
+The important constraint is **directly understandable source with no unnecessary build machinery**, not literal one-file purity.
 
-## 13. Make loading and errors part of the ordinary UI
+## 3. No build step unless it earns its existence
 
-Simon tools commonly disable controls during asynchronous work, change button labels to indicate progress, and show errors in dedicated visible areas.
+Prefer source files the browser consumes directly.
 
-This matters even more for LLMs because operations may involve:
+Avoid requiring npm installation, Vite/Webpack/Rollup, transpilation, or generated bundles merely to run ordinary application code.
 
-- loading a large browser model;
-- waiting for WebGPU initialization;
-- API authentication failures;
-- rate limits;
-- CORS failures;
-- streamed generation;
-- network interruption.
+A build step is acceptable only if a chosen dependency makes it materially simpler and the deployed result remains ordinary static assets.
 
-Represent these states plainly. Avoid hiding operational information behind developer-console-only errors.
+## 4. Prefer browser-ready, version-pinned dependencies
 
-For local models, expose model download/loading progress if the underlying library provides it.
+Simon commonly uses versioned CDN dependencies, including browser ESM imports.
 
-## 14. Use semantic HTML and lightweight accessibility
+Prefer dependencies that can be loaded directly, for example:
 
-`llm-prices` demonstrates useful accessibility details such as `aria-label`, `aria-sort`, keyboard-focus styling, semantic buttons for sortable controls, and visually hidden explanatory text.
+```js
+import something from 'https://cdn.jsdelivr.net/npm/package@VERSION/+esm';
+```
 
 Guidelines:
 
-- use actual `<button>` elements for actions;
-- use `<label for>` for form controls;
-- preserve keyboard navigation;
-- provide visible `:focus` states;
-- use ARIA when native HTML alone does not communicate state;
-- do not make color the only indicator of status;
-- ensure streaming transcript updates remain readable rather than visually chaotic.
+- pin versions;
+- use established CDNs;
+- prefer browser-ready ESM;
+- keep the dependency count small;
+- do not introduce npm solely to retrieve code the browser can load directly.
 
-This should be achieved with normal HTML rather than an accessibility abstraction library.
+This should be a meaningful criterion in the provider-library bake-off.
 
-## 15. Escape or sanitize content at trust boundaries
+## 5. Keep the deployed application genuinely static
 
-`viewport-preview` includes a small explicit HTML escaping helper before interpolating user-controlled values into generated markup. This is representative of the right level of security discipline for tiny browser tools: simple code does not mean ignoring trust boundaries.
+GitHub Pages or an ordinary static server should be sufficient.
+
+There is deliberately no application backend in the initial demo. If a future feature truly requires server-side behavior, isolate it and document why the browser alone cannot provide it.
+
+## 6. Use browser APIs directly
+
+Relevant browser-native capabilities include:
+
+- `fetch()`;
+- native ES modules and dynamic `import()`;
+- `EventTarget` / `CustomEvent`;
+- `AbortController`;
+- Clipboard APIs;
+- File/Blob APIs;
+- URL query parameters/fragments;
+- localStorage and IndexedDB;
+- Web Workers and sandboxed iframes;
+- `postMessage()`;
+- WebAssembly and WebGPU.
+
+For the extension architecture, prefer composing these primitives rather than building replacements for them.
+
+## 7. Treat CORS as an architecture boundary
+
+A JavaScript SDK being browser-compatible does not prove that a provider API can be called directly from a static page.
+
+Test real browser requests early. Keep CORS failures understandable. Plain `fetch()` is a useful diagnostic baseline even if the final provider extension uses a higher-level library.
+
+## 8. BYOK should be explicit and conservative
+
+`openai-webrtc.html` provides a relevant precedent for accepting a user-supplied OpenAI token directly in browser UI, though this project no longer intends to implement its audio/WebRTC behavior.
 
 For this project:
 
-- prefer `textContent` when inserting model/user text into the DOM;
-- do not place LLM output directly into `innerHTML`;
-- if Markdown rendering is added, use a well-understood renderer plus sanitization appropriate to untrusted model output;
-- never construct executable HTML from provider responses;
-- validate/escape URL-derived state before rendering it.
+- credentials belong to the user;
+- use password controls;
+- never ship an application-owned secret;
+- initially keep credentials in memory;
+- never log credentials;
+- do not expose credentials through a generic extension API;
+- if persistence is later added, make it opt-in and easy to clear.
 
-LLM output must be treated as untrusted content.
+The extension system makes dependency and imported-code trust especially important because same-page JavaScript can potentially inspect credentials.
 
-## 16. Keep functions small and close to the DOM they serve
+## 9. Make safe state linkable
 
-The representative tools generally use ordinary named functions and direct DOM references rather than elaborate class hierarchies.
+URL state can make a static application surprisingly useful.
 
-Good POC structure might look like:
+Good candidates later include selected model/provider and non-sensitive UI options. Never place API keys or other secrets in URLs.
 
-```js
-const modelSelect = document.querySelector('#model');
-const apiKeyInput = document.querySelector('#api-key');
-const transcript = document.querySelector('#transcript');
+Do not add URL-state machinery until it provides a real benefit to the experiment.
 
-function updateModelControls() { ... }
-function appendMessage(role, text) { ... }
-function showError(message) { ... }
-async function sendMessage() { ... }
+## 10. Keep the UI conventional and functional
+
+Common Simon-style structural patterns include:
+
+- `<meta name="viewport">`;
+- `box-sizing: border-box`;
+- centered, bounded content;
+- ordinary labels, inputs, selects, textareas, and buttons;
+- readable 16px-ish controls on mobile;
+- simple responsive grid/flex layouts;
+- explicit loading/error/status areas;
+- disabled controls during unavailable states;
+- visible focus states;
+- semantic HTML and lightweight ARIA where necessary.
+
+Do not build a design system for the POC.
+
+## 11. Design mobile behavior deliberately
+
+Start with a layout that works at phone width.
+
+For the initial prompt/result UI:
+
+- provider/model selection must not overflow;
+- credential input must remain usable;
+- prompt and result should be readable at narrow widths;
+- local-model loading status should remain understandable;
+- long model names and errors must wrap sensibly.
+
+## 12. Keep interactions direct
+
+The current initial interaction is deliberately tiny:
+
+```text
+select model
+  -> show any required credential/loading controls
+enter prompt
+  -> Run
+  -> disable appropriate controls
+  -> invoke selected model
+  -> render one result or error
+  -> restore controls
 ```
 
-If provider abstraction is supplied by a dependency, application code should stay at roughly this level. Do not recreate a second internal framework around the library.
+No transcript, conversation reducer, chat state, or streaming machinery is required initially.
 
-## 17. Prefer progressive complexity
+The extension host may use a small event mechanism because extension lifecycle and observation are now explicit architectural requirements. This is different from introducing a generalized application-wide event-bus framework. Prefer native `EventTarget`/`CustomEvent` and explicit registries; use events for observation rather than turning every operation into an event protocol.
 
-A strong pattern in Simon's work is that small tools can become surprisingly capable without changing their fundamental architecture. Browser files, CORS APIs, WASM, Pyodide, WebRTC, and URL persistence can all be layered onto static HTML.
+## 13. Make loading and errors ordinary UI
 
-Apply the same discipline here:
+Represent asynchronous states plainly:
 
-1. one hosted provider, one prompt, one response;
-2. second hosted provider through the chosen abstraction;
-3. browser-local model;
-4. streaming if easy;
-5. model loading/progress;
-6. only then convenience features such as persistent preferences or shareable state.
+- model loading/download;
+- WebGPU initialization;
+- authentication failure;
+- CORS/network errors;
+- rate limits;
+- provider errors;
+- later, streaming interruption.
+
+Do not hide operationally important information in the developer console.
+
+## 14. Use semantic HTML and lightweight accessibility
+
+Use real buttons for actions, labels for controls, keyboard navigation, visible focus, and ARIA only where native semantics are insufficient.
+
+The first one-prompt/one-response UI should be accessible without needing a UI framework.
+
+## 15. Treat model and extension content as untrusted
+
+Prefer `textContent` for model/user text. Do not insert model output directly with `innerHTML`. If Markdown arrives later, render and sanitize it deliberately.
+
+Imported or generated extension code is a much stronger trust boundary: arbitrary same-realm JavaScript is executable code, not content. See `extension-architecture.md` for the isolation discussion.
+
+## 16. Keep code locally understandable
+
+Simon-style code favors ordinary functions and explicit DOM work over elaborate class hierarchies.
+
+The new extension architecture should preserve that property. A tiny host API is acceptable; an internal framework with dependency injection, global stores, decorators, generated bindings, or deep inheritance is not.
+
+An extension should ideally be understandable from a short example such as:
+
+```js
+export function activate(api) {
+  return api.models.register({
+    id: 'example:model',
+    label: 'Example',
+    generate: async ({ prompt }) => ({ text: prompt.toUpperCase() })
+  }).dispose;
+}
+```
+
+(The exact API is still to be designed.)
+
+## 17. Progressive complexity: current sequence
+
+The current sequence is:
+
+1. tiny extension-host walking skeleton;
+2. one hosted provider, one prompt, one response;
+3. second hosted provider / abstraction bake-off;
+4. one browser-local WebGPU model;
+5. streaming;
+6. simple tools as extensions;
+7. conversation/multi-turn state only if useful;
+8. later, portable/importable/LLM-generated extensions;
+9. multi-agent orchestration only in a future version.
 
 Each step should leave the application runnable and understandable.
 
-## 18. Testing: use a real browser for behavior that matters
+This sequence deliberately postpones streaming even if a selected library offers it immediately. The point is to introduce one architectural complication at a time.
 
-The `tools` repository uses Playwright with pytest and serves files from a tiny local HTTP server. Simon also explicitly values coding agents being able to test browser applications themselves.
+## 18. Built-ins should dogfood the extension API
 
-For `multi-agent-demo`, browser-level tests are more valuable than unit-test infrastructure for most early risks. Test things such as:
+This is the main project-specific addition to the Simon-style approach.
 
-- initial page renders;
-- provider selection changes credential controls;
-- submit/disabled/loading behavior;
-- transcript rendering;
-- error rendering;
-- URL state restoration if implemented;
-- mobile viewport layout;
-- provider calls through mocked/stubbed network responses where practical.
+Providers, local model runtimes, tools, diagnostics, commands, and optional UI features should use the same small public registration API wherever practical.
 
-Keep test infrastructure separate from runtime infrastructure. It is fine for tests to require Python/Playwright even though the deployed application has no build or server runtime.
+That keeps the core small and gives the extension API constant real-world exercise.
 
-## 19. Keep deployment boring
+Do not take this as permission to build a large plugin framework. The desired extension kernel should be smaller and more obvious than the features built on it.
 
-A Simon-style application should be deployable as static files to GitHub Pages or equivalent hosting.
+## 19. Use a real browser for tests
 
-For this repository:
+The `simonw/tools` repository uses Playwright with pytest and a tiny local HTTP server. That is a good fit here.
 
-- prefer GitHub Pages for the public demo;
-- do not add a container just to serve static files;
-- do not require a cloud-specific application framework;
-- keep local development compatible with any trivial HTTP server;
-- keep production artifacts identical, or nearly identical, to repository source.
+Early Playwright coverage should include:
 
-The absence of a deployment architecture is a feature.
+- host loads;
+- built-in extensions activate;
+- extension registrations clean up correctly;
+- provider/model selection;
+- credential controls;
+- one-prompt/one-response behavior;
+- loading and error states;
+- mocked provider calls;
+- mobile viewport behavior;
+- local-model compatibility/loading where practical.
 
-## 20. Preserve provenance and reasoning
+Most tests should use fake providers/extensions. A tiny optional real-API suite can exist later if useful.
 
-Simon frequently records prompts/transcripts and links them from commit history. His `tools` repository also builds a colophon showing tool histories.
+There is no need for voice/audio testing because voice is out of scope.
 
-We do not need to copy that machinery immediately, but the underlying habit is valuable:
+## 20. Keep deployment boring
 
-- make commits describe the experiment or decision, not just the changed files;
-- link relevant research/discussion where useful;
-- keep architecture notes in `docs/`;
-- for AI-assisted implementation spikes, record what was tested and what failed, especially around browser compatibility and CORS.
+Prefer GitHub Pages. Do not add a container or cloud-specific application framework just to serve static files.
 
-This repository is a POC, so failed experiments are useful project knowledge.
+Repository source and production assets should remain identical or nearly identical.
 
-## What to copy versus what not to copy
+## 21. Preserve provenance and failed experiments
 
-### Copy these principles
+This repository is a POC. Record what was tested, particularly:
+
+- provider CORS behavior;
+- provider-library bake-off results;
+- WebGPU/local-model compatibility;
+- extension API decisions;
+- sandbox/isolation experiments;
+- approaches rejected for unnecessary complexity.
+
+Failed spikes are useful project knowledge.
+
+## What to copy from Simon's approach
 
 - browser-native HTML/CSS/JS;
 - static hosting;
 - no build step by default;
-- one-file application while it remains clear;
-- versioned CDN dependencies;
 - direct use of browser APIs;
+- version-pinned dependencies;
 - CORS-aware architecture;
-- simple responsive forms;
-- URL state for safe shareable configuration;
-- local storage only when persistence is useful and intentional;
-- real-browser testing;
+- straightforward responsive UI;
 - explicit loading/error states;
-- simple code that coding agents and humans can inspect quickly.
+- real-browser testing;
+- source that humans and coding agents can inspect quickly;
+- willingness to split into a few plain JavaScript modules when that improves clarity.
 
-### Do not copy mechanically
+## What not to copy mechanically
 
-- exact colors, fonts, shadows, or visual styling from individual tools;
-- the `tools` repository's generated index/colophon machinery unless this repository grows into a collection of applications;
-- localStorage credential persistence just because some personal tools use it;
-- every feature that browsers make possible;
-- single-file structure after it has genuinely become harder to understand than a few well-named files.
+- exact visual styling;
+- single-file structure after it harms clarity;
+- `simonw/tools` index/colophon machinery;
+- localStorage credential persistence merely because some personal tools use it;
+- every browser capability just because it exists;
+- audio/WebRTC functionality from `openai-webrtc.html`;
+- repository machinery unrelated to this experiment.
 
-The objective is Simon's **simplicity and leverage**, not stylistic cosplay.
+## The project-specific synthesis
 
-## Recommended repository shape for the first POC
+The intended style is now:
 
-```text
-multi-agent-demo/
-├── index.html
-├── docs/
-│   ├── technical-direction.md
-│   └── simon-willison-html-tool-guidelines.md
-├── tests/                 # add when browser behavior warrants it
-│   └── ...
-└── README.md              # add a short run/deploy description
-```
+> **Simon-style static browser software on the outside; an exceptionally small extension host on the inside.**
 
-If a library absolutely requires local files that cannot sensibly be loaded from a CDN, add only those files required. If JavaScript becomes unwieldy, the next step should be something like `app.js` or a few native ES modules — not an automatic migration to a framework.
+Native ES modules, direct DOM code, Web APIs, static hosting, and Playwright keep the implementation concrete. A tiny `activate(api)`-style extension contract keeps providers, tools, UI experiments, and future generated extensions decoupled from the host.
 
-## Concrete rules for `multi-agent-demo`
-
-Use these as implementation defaults:
-
-1. **The POC is a static web page.** No backend and no runtime server beyond static hosting.
-2. **Start with `index.html` containing its own CSS and JavaScript.** Split only when clarity improves.
-3. **No React and no frontend framework.** Reconsider only after a demonstrated maintenance problem.
-4. **No mandatory build step.** Source should run directly in a modern browser via a static HTTP server.
-5. **Prefer browser-ready, version-pinned CDN imports.** Library choice should account for this.
-6. **Use native DOM APIs and browser APIs directly.** Avoid abstractions that merely wrap simple browser functionality.
-7. **Treat CORS testing as part of provider evaluation.** A provider is not browser-compatible until a real browser request proves it.
-8. **Keep BYOK keys memory-only initially.** Never put secrets in source or URLs.
-9. **Render user and model text safely.** Default to `textContent`; sanitize any future rich rendering.
-10. **Build mobile-first enough that the POC is pleasant on a phone.** Use ordinary responsive CSS, not a CSS framework.
-11. **Show progress, loading, and errors explicitly.** Especially model downloads, initialization, API failures, and streaming state.
-12. **Keep state simple.** DOM + a few JavaScript variables first; URL/localStorage only for state that benefits from persistence or sharing.
-13. **Use Playwright for important end-to-end browser behavior.** Do not introduce heavy unit-test architecture for trivial DOM functions.
-14. **Deploy the same static source that is in Git.** GitHub Pages is the natural first target.
-15. **Optimize for inspectability.** A human or coding agent should be able to open the repository and understand the complete application quickly.
-
-## Implication for the provider-library bake-off
-
-The existing `technical-direction.md` proposes comparing ClientAgentJS, Vercel AI SDK, BundleLLM, and possibly `@livx.cc/ask`. Simon's patterns provide an additional selection criterion beyond API elegance.
-
-For each candidate, record:
-
-| Criterion | Question |
-| --- | --- |
-| Direct browser use | Can it run in a static page with no server runtime? |
-| No-build use | Can it be imported from a versioned CDN/ESM URL? |
-| CORS reality | Do target providers actually work from a browser? |
-| Code footprint | How much application glue does one chat request require? |
-| Streaming | Does streaming work without framework-specific UI machinery? |
-| Credential handling | Can the app supply an in-memory user key explicitly? |
-| Local-model fit | Can WebLLM/browser models fit the same interface cleanly? |
-| Debuggability | When something fails, is the browser/network behavior understandable? |
-| Portability | Can the resulting app be copied to arbitrary static hosting unchanged? |
-
-A library that saves twenty lines of provider normalization but forces a Node build pipeline may be a worse fit than a slightly more explicit browser-native option.
-
-## Final design heuristic
-
-When choosing between two implementations, prefer the one for which this statement is more true:
-
-> I can open `index.html`, understand what the application does, serve it from any static host, inspect every network request in browser developer tools, and modify it without first reconstructing a frontend toolchain.
-
-That is the most transferable pattern from Simon Willison's HTML tools to this repository.
+If the extension architecture starts to look like a frontend framework, package manager, or miniature VS Code, it has missed the point.
