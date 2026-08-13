@@ -81,6 +81,10 @@ Useful native pieces include:
 
 The extension API should compose these primitives rather than replacing them with an elaborate framework.
 
+## Relationship to the v0 implementation contract
+
+This document explains the design rationale and longer-term possibilities. For Stage 0, the normative source is `docs/implementation-contract-v0.md`. If an example here differs from the contract, follow the contract and repair this document.
+
 ## Recommended conceptual model
 
 Use three concepts:
@@ -96,24 +100,26 @@ CONTRIBUTION
   a provider/model/tool/action/view/etc. registered with the host
 ```
 
-The smallest useful lifecycle is probably:
+The v0 lifecycle is frozen in `docs/implementation-contract-v0.md`:
 
 ```js
 export const manifest = {
   id: 'example.extension',
-  version: '0.1.0'
+  name: 'Example extension',
+  version: '0.1.0',
+  apiVersion: 1
 };
 
-export function activate(api) {
-  // register contributions
+export async function activate(api) {
+  api.models.register(/* contribution */);
 
   return () => {
-    // optional extension-specific cleanup
+    // optional cleanup for resources not registered through the host
   };
 }
 ```
 
-The host should additionally own every registration and dispose it automatically on unload, so extensions cannot accidentally leave event listeners or registrations behind.
+`activate()` may be synchronous or asynchronous. The host owns every registration and disposes them in reverse registration order on unload. If activation throws, the host rolls back all partial registrations before reporting the failure. Registration disposal is idempotent. Duplicate extension IDs and duplicate model IDs are rejected rather than replaced.
 
 ## Registration API rather than hook soup
 
@@ -123,11 +129,14 @@ For example:
 
 ```js
 api.models.register(model)
-api.tools.register(tool)
-api.ui.registerAction(action)
-api.ui.registerView(view)
-api.events.on(type, listener)
+api.models.list()
+api.models.get(id)
+api.models.subscribe(listener)
+api.models.invoke(id, input)
+api.ui.registerView(slot, view)
 ```
+
+The registry needs both producer- and consumer-facing operations. The prompt UI must be able to list models, retrieve public descriptors, observe registration/removal, and invoke a selected model without receiving its private implementation function. v0 implements only `models` and the `main` UI slot; tools, events, storage, commands, and additional UI slots are later additions.
 
 Each registration should return a tiny disposable:
 
@@ -169,25 +178,28 @@ Do not implement all of these immediately. They are a map of what naturally fits
 
 A model contribution describes an invokable language model.
 
-Possible minimal shape:
+The canonical v0 shape is:
 
 ```js
 {
-  id: 'openai:gpt-x',
-  label: 'GPT X',
-  provider: 'openai',
-  capabilities: { streaming: true, tools: true },
-  generate: async ({ prompt, signal }) => ({ text: '...' })
+  id: 'example:model',
+  label: 'Example model',
+  providerId: 'example',
+  providerLabel: 'Example',
+  credential: null,
+  generate: async ({ prompt, credential, signal }) => ({ text: '...' })
 }
 ```
 
-The first contract should be optimized for **one prompt / one response**, not chat history or streaming. Streaming and tools should extend the contract later.
+The completed result is always `Promise<{ text: string }>`; returning a bare string is invalid. Public descriptors returned by `list()` and `get()` omit `generate`. The prompt UI invokes through `api.models.invoke()`, and the host routes the supplied credential only to the selected model implementation.
+
+The first contract is optimized for **one prompt / one completed response**. Tools are added later. Incremental token/chunk display is a later-version capability and does not complicate v0.
 
 ### Providers
 
-It may turn out that the host does not need a separate provider concept at all: extensions can simply register models. Provider metadata/credential UI could be part of the model registration or a small shared provider registration.
+v0 has **no provider registry**. Extensions register models, and each model carries simple `providerId`, `providerLabel`, and credential-field metadata.
 
-This is exactly the kind of question the first two-provider spike should answer. Avoid creating two abstractions if one suffices.
+The second hosted integration should reveal whether providers have a real shared lifecycle or credential concern. Introduce a separate provider contribution type only when that need is demonstrated; do not create two abstractions in anticipation.
 
 ### Tools
 
@@ -203,6 +215,8 @@ Later:
 ```
 
 Tools should be ordinary contributions, not a special agent framework.
+
+Tools can precede retained conversation state. A single visible run may keep temporary invocation state for a model → tool → model loop and then discard it after rendering one final response. Persistent messages, a transcript, and multi-turn state remain a separate later feature.
 
 ### Commands/actions
 
@@ -224,12 +238,11 @@ This is a useful VS Code idea at a much smaller scale.
 
 UI extensibility is where plugin APIs tend to become complicated. Start with named slots/contribution points rather than a virtual component framework.
 
-Possible early contribution points:
+v0 implements one contribution point:
 
-- `main` — primary application view;
-- `toolbar` — actions;
-- `settings` — configuration sections;
-- `status` — diagnostics/status.
+- `main` — the primary application view, filled by the built-in prompt UI extension.
+
+Possible later contribution points include `toolbar`, `settings`, and `status`.
 
 A contribution might provide a function that receives a container element and returns cleanup:
 
@@ -278,7 +291,7 @@ Credentials should **not** go through generic extension storage in the initial d
 
 A runtime extension package will eventually need metadata, but avoid designing an npm-like package format now.
 
-Likely minimum:
+The frozen v0 minimum is:
 
 ```js
 {
@@ -315,7 +328,7 @@ Therefore:
 - diagnostics register through the same UI/event APIs;
 - tests should load tiny fake extensions through the same loader.
 
-The host itself may still have a minimal boot UI required to recover from broken extensions and manage them.
+The v0 host provides only the DOM shell and error fallback. The prompt UI is definitively a built-in extension registered in the `main` slot.
 
 ## Runtime-generated extensions
 
@@ -400,7 +413,7 @@ This decision can wait until runtime extensions are implemented.
 
 ## API versioning
 
-Because generated/shared extensions may persist for a long time, the API needs a simple compatibility story.
+Because generated/shared extensions may persist for a long time, the API needs a simple compatibility story. Stage 0 accepts only integer `apiVersion: 1`.
 
 Start with an integer `apiVersion`. Prefer additive API evolution. New namespaces/functions should not break old extensions.
 
@@ -460,23 +473,21 @@ The first milestone needs only enough architecture to prove that built-in featur
 
 ## Proposed first spike
 
-Before implementing any LLM provider, build this:
+Before implementing any LLM provider, build the exact Stage 0 walking skeleton from `docs/implementation-contract-v0.md`:
 
 ```text
 index.html
-  -> loads host
-  -> host loads two built-in ES-module extensions
+  -> loads app.js
+  -> app explicitly imports two built-in ES-module extensions
 
-extension A
-  -> registers a command/action or tiny view
+fake-model extension
+  -> registers one deterministic model
 
-extension B
-  -> registers a fake model
-
-prompt UI
-  -> discovers fake model through registry
-  -> sends one prompt
-  -> renders one response
+prompt-ui extension
+  -> registers the main view
+  -> discovers the fake model through the registry
+  -> sends one prompt through models.invoke()
+  -> renders one completed response
 ```
 
 Then ask:
