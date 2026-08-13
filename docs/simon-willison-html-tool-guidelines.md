@@ -4,7 +4,18 @@
 
 These guidelines capture recurring engineering patterns from Simon Willison's static HTML/JavaScript applications and apply them to this repository.
 
-The primary references examined were `simonw/tools`, its `TOOLS_GUIDE.md`, `openai-webrtc.html`, `simonw/llm-prices`, `simonw/viewport-preview`, and `simonw/gistpreview.github.io`.
+### Source projects implementors should inspect
+
+Before making substantial architectural or UI decisions, browse the source of these Simon Willison projects. They are concrete examples of the style this document refers to:
+
+- **Tools** — https://github.com/simonw/tools — the main reference corpus: many small static browser tools, mostly plain HTML/CSS/JavaScript. In particular inspect `TOOLS_GUIDE.md`, representative `.html` tools, the Playwright tests, and GitHub Pages workflows.
+- **Tools guide** — https://github.com/simonw/tools/blob/main/TOOLS_GUIDE.md — Simon's repository-level guide to recurring structure and implementation patterns.
+- **Viewport Preview** — https://github.com/simonw/viewport-preview — an especially small and legible example of a complete browser application in one HTML file.
+- **LLM Prices** — https://github.com/simonw/llm-prices — a larger static application showing how substantial interactive behavior can remain browser-native and framework-free.
+- **Gist Preview** — https://github.com/simonw/gistpreview.github.io — useful counterexample to one-file purity: a tiny static application that separates JavaScript into `main.js` while retaining a very simple architecture.
+- **OpenAI WebRTC tool source** — https://github.com/simonw/tools/blob/main/openai-webrtc.html — relevant mainly as an example of a comparatively substantial browser application, direct API credential entry, explicit state/status UI, and plain JavaScript. **Do not copy its voice/WebRTC functionality; voice is out of scope for this project.**
+
+Treat these as source-reading references, not templates to copy mechanically. Look for recurring decisions: how little machinery is required, when code stays inline versus splits into modules, how browser APIs are used directly, how errors/loading are represented, and how the deployed source remains inspectable.
 
 The goal is not to imitate Simon's visual styling. It is to copy the properties that make these applications easy to inspect, hack on, self-host, test, and hand to a coding agent.
 
