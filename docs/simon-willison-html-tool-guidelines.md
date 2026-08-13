@@ -103,8 +103,7 @@ Relevant browser-native capabilities include:
 - File/Blob APIs;
 - URL query parameters/fragments;
 - localStorage and IndexedDB;
-- Web Workers and sandboxed iframes;
-- `postMessage()`;
+- Web Workers where a model runtime needs background computation;
 - WebAssembly and WebGPU.
 
 For the extension architecture, prefer composing these primitives rather than building replacements for them.
@@ -127,7 +126,7 @@ For this project:
 - do not expose credentials through a generic extension API;
 - if persistence is later added, make it opt-in and easy to clear.
 
-The extension system makes dependency and imported-code trust especially important because same-page JavaScript can potentially inspect credentials.
+The extension system uses trusted same-realm ES modules. Dependency and imported-code trust are therefore essential because active extensions have the page’s effective authority and can inspect in-page credentials.
 
 ## 9. Make safe state linkable
 
@@ -204,11 +203,11 @@ Use real buttons for actions, labels for controls, keyboard navigation, visible 
 
 The first one-prompt/one-response UI should be accessible without needing a UI framework.
 
-## 15. Treat model and extension content as untrusted
+## 15. Treat model text as untrusted and extension code as privileged
 
 Prefer `textContent` for model/user text. Do not insert model output directly with `innerHTML`. If Markdown arrives later, render and sanitize it deliberately.
 
-Imported or generated extension code is a much stronger trust boundary: arbitrary same-realm JavaScript is executable code, not content. See `extension-architecture.md` for the isolation discussion.
+Imported or generated extension source is executable code, not content. The demo deliberately runs extensions as trusted same-realm ES modules, so users must review and explicitly trust them before activation. See `extension-architecture.md` and the trusted-runtime decision note.
 
 ## 16. Keep code locally understandable
 
@@ -292,7 +291,7 @@ This repository is a POC. Record what was tested, particularly:
 - provider-library bake-off results;
 - WebGPU/local-model compatibility;
 - extension API decisions;
-- sandbox/isolation experiments;
+- extension provenance, review, and activation experiments;
 - approaches rejected for unnecessary complexity.
 
 Failed spikes are useful project knowledge.
@@ -326,6 +325,6 @@ The intended style is now:
 
 > **Simon-style static browser software on the outside; an exceptionally small extension host on the inside.**
 
-Native ES modules, direct DOM code, Web APIs, static hosting, and Playwright keep the implementation concrete. A tiny `activate(api)`-style extension contract keeps providers, tools, UI experiments, and future generated extensions decoupled from the host.
+Native ES modules, direct DOM code, Web APIs, static hosting, and Playwright keep the implementation concrete. A tiny `activate(api)`-style extension contract keeps providers, tools, UI experiments, and future generated extensions decoupled from the host. Extensions execute as trusted same-realm modules; the contract organizes code but does not sandbox it.
 
 If the extension architecture starts to look like a frontend framework, package manager, or miniature VS Code, it has missed the point.
