@@ -12,7 +12,6 @@ The application has no backend of its own. It should remain easy to inspect, cop
 
 Despite the repository's working name, **multi-agent behavior is explicitly out of scope for the initial demo**. It may be explored in a later version.
 
-Voice/audio interaction was also discussed and is now **explicitly dropped from the plan**. The project is text-only unless that decision is revisited much later.
 
 ## Core constraints
 
@@ -27,7 +26,7 @@ Preserve these constraints aggressively:
 - **Bring your own credentials.** Remote-provider credentials belong to the user, never to the deployed application.
 - **Minimal UI and minimal glue.**
 - **One prompt / one response first.** Do not begin with conversation state.
-- **No streaming initially.** Add it only after hosted multi-provider and browser-local model support work.
+- **Completed responses only in the staged plan.** Incremental token/chunk display is a later-version capability, outside the current implementation sequence.
 - **No multi-agent orchestration in the initial demo.**
 - **Extension-first architecture.** Features that naturally fit the extension model should use the same public extension API as third-party extensions.
 
@@ -45,9 +44,8 @@ Static application host
   +-- extension discovery / loading / lifecycle
   +-- extension registry
   +-- tiny public host API
-  +-- permissions / trust boundary
-  +-- shared event mechanism
-  +-- extension persistence / import / export
+  +-- activation, rollback, and deterministic cleanup
+  +-- model and UI registries
   +-- minimal shell / contribution points
           |
           +-- UI extensions
@@ -74,13 +72,15 @@ Hosted providers are natural extensions. An extension can contribute one or more
 
 This means OpenAI, Anthropic, Google, OpenRouter, or a provider abstraction library can be integrated without teaching the core about each vendor.
 
-The provider bake-off remains useful: ClientAgentJS, Vercel AI SDK, BundleLLM, `@livx.cc/ask`, official SDKs, and plain `fetch()` can be evaluated as implementation strategies *inside* provider extensions rather than as architectures for the entire application.
+The provider bake-off remains useful: ClientAgentJS, Vercel AI SDK, BundleLLM, `@livx.cc/ask`, official SDKs, and plain `fetch()` can be evaluated as implementation strategies *inside* model extensions rather than as architectures for the entire application.
+
+For v0 there is no separate provider registry. A model descriptor carries simple provider metadata. Add a provider abstraction only if the second hosted integration demonstrates a concrete shared lifecycle or credential requirement.
 
 ### Browser-local model runtimes
 
 WebLLM and/or Transformers.js should appear through the same model contribution surface where practical. Local versus hosted should be metadata/capability of a model, not a separate application mode.
 
-A local model extension may additionally expose loading progress, compatibility information, cache state, and model download size.
+A local model extension may additionally expose loading progress, compatibility information, cache state, and model download size. Before Stage 3 begins, record the exact model, runtime version, compressed download size, supported browsers, and measured first-load time.
 
 ### UI contributions
 
@@ -93,13 +93,13 @@ Examples might eventually include:
 - toolbar/action;
 - status/diagnostics panel.
 
-The initial prompt/result UI can itself be a built-in extension if this remains simple enough.
+The initial prompt/result UI **is a built-in extension**. It registers the main view through the same public UI contribution API available to other trusted extensions.
 
 ### Tools
 
 Tools should use the extension mechanism from their first appearance. A tool extension contributes a name, description/schema, and implementation callable by a model or by the UI.
 
-This is deliberately postponed until after providers, local models, and streaming work.
+This is deliberately postponed until after hosted providers and the first browser-local model work.
 
 ### Diagnostics and developer tooling
 
@@ -115,18 +115,19 @@ This is **not** the same as allowing the model to rewrite the trusted core. The 
 
 ## What should stay in the host?
 
-Keep the host intentionally boring. Likely host responsibilities are:
+Keep the host intentionally boring.
 
-- loading and unloading extensions;
-- validating extension metadata;
-- maintaining the registry of contributions;
-- handing each extension a constrained host API;
-- cleaning up registrations when an extension unloads;
-- routing host events;
-- persisting extension packages and enabled/disabled state;
-- importing/exporting extension packages;
-- enforcing whatever trust/permission model is practical;
-- providing a minimal DOM shell and named contribution points.
+For v0, host responsibilities are limited to:
+
+- explicitly loading and unloading built-in extension modules;
+- validating the frozen v0 manifest and contribution shapes;
+- maintaining model and UI registries;
+- handing each extension a small host API;
+- rolling back partial registrations when activation fails;
+- cleaning up registrations deterministically when an extension unloads;
+- providing a minimal DOM shell and the named `main` contribution point.
+
+Persistence, import/export, user-extension enablement, permission prompts, and isolated runtimes are possible **later host responsibilities**, not v0 work.
 
 Provider-specific behavior, tools, model catalogs, application commands, optional panels, and experiments should not accumulate in the host.
 
@@ -153,7 +154,7 @@ export function activate(api) {
   const disposable = api.models.register({
     id: 'example:model',
     label: 'Example model',
-    generate: async ({ prompt }) => '...'
+    generate: async ({ prompt }) => ({ text: '...' })
   });
 
   return () => disposable.dispose();
@@ -195,7 +196,9 @@ Do not use `eval()` as the architecture. Dynamic execution may be an implementat
 
 ### Credentials
 
-Remote API keys should initially remain in memory. Never expose credentials through the generic extension API. Provider extensions should receive only the credentials/capabilities they require, and any future permission model should make this explicit.
+Remote API keys should initially remain in memory. Never expose credentials through the generic extension API. The prompt UI passes a credential only when invoking the selected model; the host routes it to that model's implementation and never places it in registry descriptors, events, storage, URLs, or logs. The exact v0 invocation contract is defined in `docs/implementation-contract-v0.md`.
+
+This is API-level discipline, not a same-realm security boundary. Trusted built-in modules and loaded third-party dependencies execute in the same page and can technically inspect DOM and JavaScript state. Real isolation for imported code is later research.
 
 ## Browser-local models
 
@@ -230,11 +233,13 @@ Do not prematurely choose the largest framework. Implement the same one-prompt/o
 Primary candidates:
 
 - **ClientAgentJS** — browser-first and direct-BYOK oriented;
-- **Vercel AI SDK** — mature common model APIs and potentially the cleanest route to both hosted and browser-local models;
+- **Vercel AI SDK** — mature common model APIs and potentially a route to hosted and browser-local models;
 - **BundleLLM** — useful browser-native BYOK/OAuth comparison;
 - **`@livx.cc/ask`** — broad advertised provider coverage, pending real browser/CORS verification;
 - official provider SDKs — fallback;
 - plain `fetch()` — diagnostic baseline and fallback.
+
+Before a candidate enters the repository, verify its canonical source and browser support, record the source URL and tested version in a decision note, and pin the deployed version. The current verified local-runtime reference is [WebLLM](https://github.com/mlc-ai/web-llm). Do not copy an unverified package name into production code merely because it appears in this research list.
 
 Choose primarily on:
 
@@ -244,27 +249,28 @@ Choose primarily on:
 - hosted provider coverage;
 - fit with WebLLM/local inference;
 - error normalization;
-- streaming support for the later streaming stage;
+- whether its non-streaming API stays small and does not prevent later incremental output;
 - package/dependency weight;
 - ease of wrapping as an extension without leaking library concepts into the host.
 
 ## Staged implementation plan
 
+`docs/implementation-contract-v0.md` is normative for Stage 0. `AGENTS.md` is the entry point for implementation work.
+
 Each stage should leave a small, runnable application. Introduce one major kind of complexity at a time.
 
-### Stage 0 — Extension host walking skeleton
+### Stage 0 — Fake-model walking skeleton
 
-Build the smallest credible host and one built-in "hello" extension.
+Implement the frozen contract in `docs/implementation-contract-v0.md`:
 
-Prove:
+- the host explicitly imports two built-in ES-module extensions;
+- a fake-model extension registers one deterministic model;
+- the prompt UI extension discovers it through the registry;
+- one prompt produces one completed response;
+- activation rollback, duplicate rejection, and unload cleanup work;
+- Playwright verifies the flow in Chromium and a phone-sized viewport.
 
-- extension discovery/activation;
-- one registration API;
-- cleanup/unload;
-- a tiny contribution point;
-- Playwright can verify extension activation in a real browser.
-
-Do **not** solve runtime-generated extensions, permissions, marketplaces, dependency graphs, or sophisticated manifests here.
+Do **not** solve runtime-generated extensions, permissions, marketplaces, dependency graphs, sophisticated manifests, or real provider access here.
 
 ### Stage 1 — One hosted model, one prompt, one response
 
@@ -279,7 +285,7 @@ UI:
 - result area;
 - loading and error state.
 
-No transcript. No conversation history. No streaming.
+No transcript, retained conversation state, tool loop, or incremental response display.
 
 ### Stage 2 — Multi-provider
 
@@ -298,25 +304,30 @@ Prove:
 - local inference;
 - local and hosted models can be selected and invoked through the same user flow.
 
-### Stage 4 — Streaming
-
-Only now add streaming.
-
-Streaming should extend the existing invocation contract without forcing a redesign of providers or UI. This is an architectural test: if streaming requires bypassing the extension model, revisit the model API.
-
-### Stage 5 — Simple tools
+### Stage 4 — Simple tools
 
 Introduce a very small tool contribution API and one or two browser-native tools.
 
 Good early tools are deterministic, understandable, and easy to test. Tools should be ordinary extensions and should use the same lifecycle/registration mechanism as providers and UI contributions.
 
+A tool-enabled run may use a transient model → tool → model loop to produce one final response. That temporary invocation state is not retained conversation history, so tools do not require a chat UI or a conversation store.
+
 This stage is where interactions can become more interesting without introducing multi-agent orchestration.
 
-### Stage 6 — Conversation, only if useful
+### Stage 5 — Conversation, only if useful
 
 If the experiments benefit from it, add conversation history and multi-turn state after the underlying model/tool architecture is proven.
 
 Conversation is not needed to prove the initial architectural idea.
+
+### Later-version capabilities
+
+These are deliberately outside the current staged plan:
+
+- incremental response display, where generated text appears token-by-token or in small chunks;
+- multi-agent behavior and orchestration.
+
+They should be designed only after the simpler application has demonstrated value. Their future implementation must not complicate the v0 model contract now.
 
 ### Later experiment — Portable and LLM-generated extensions
 
@@ -351,8 +362,6 @@ Early tests should focus on:
 
 Most tests should use fake providers/extensions so they are deterministic and free. Keep only a very small optional suite for real provider APIs if it proves valuable.
 
-Voice/audio tests are unnecessary because voice is no longer in scope.
-
 ## Repository structure
 
 Do not interpret "Simon-style" as "everything must stay in one HTML file". Start with the smallest structure, but this project has natural module boundaries and may move to multiple native ES modules early without introducing a bundler.
@@ -381,7 +390,6 @@ Keep files coarse-grained. Splitting into ES modules is for clarity, not an invi
 
 ## Explicitly out of scope for the initial demo
 
-- voice/audio;
 - multiple agents;
 - agent orchestration/delegation;
 - backend services;
@@ -402,11 +410,10 @@ Keep files coarse-grained. Splitting into ES modules is for clarity, not an invi
 2. Which responsibilities truly must remain in the host?
 3. Can hosted and browser-local models share one model contribution contract?
 4. Which browser-capable provider library minimizes glue without infecting the host API with its own abstractions?
-5. Can streaming be added later without redesigning the non-streaming model contract?
-6. Can tools be added as ordinary extensions?
-7. Is the extension API small enough that a human can understand it in minutes and an LLM can generate correct extensions from a short specification?
-8. What isolation model is practical for imported/generated JavaScript extensions?
-9. How small can the total application-specific code remain?
+5. Can tools and their transient invocation loops be added as ordinary extensions without requiring retained conversation state?
+6. Is the extension API small enough that a human can understand it in minutes and an LLM can generate correct extensions from a short specification?
+7. What isolation model is practical for imported/generated JavaScript extensions?
+8. How small can the total application-specific code remain?
 
 ## Guiding principle
 
