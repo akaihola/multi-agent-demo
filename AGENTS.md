@@ -16,7 +16,8 @@ Read only the material needed for the task:
 2. **For scope, sequence, or product-level architecture:** [technical direction](docs/technical-direction.md).
 3. **For rationale or future extension-system design:** [extension architecture research](docs/extension-architecture.md).
 4. **For browser-native implementation and UI style:** [Simon Willison-style guidelines](docs/simon-willison-html-tool-guidelines.md).
-5. **For dependency, CORS, runtime, or model choices:** read the relevant decision note under `docs/decisions/` if one exists; create one when making a consequential choice.
+5. **For accepted architectural decisions:** read relevant notes under `docs/decisions/`, beginning with [trusted same-realm extensions](docs/decisions/2026-08-13-trusted-same-realm-extensions.md).
+6. **For new dependency, CORS, runtime, or model choices:** read the relevant decision note if one exists; create one when making a consequential choice.
 
 For Stage 0 conflicts, the implementation contract wins. Repair conflicting secondary documentation in the same change.
 
@@ -24,6 +25,7 @@ For Stage 0 conflicts, the implementation contract wins. Repair conflicting seco
 
 - Static browser application; no application backend.
 - Ordinary HTML, CSS, JavaScript, Web APIs, and native ES modules.
+- Extensions are trusted same-realm ES modules. The API is a maintainability boundary, not a sandbox or permission boundary.
 - No application build step unless a later documented dependency demonstrates the need.
 - Use relative URLs and imports so deployment under a GitHub Pages project subpath works.
 - One prompt produces one completed response.
