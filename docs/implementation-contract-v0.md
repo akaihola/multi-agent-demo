@@ -41,7 +41,7 @@ Stage 0 excludes:
 - incremental token/chunk response display;
 - persistence and URL state;
 - runtime-imported or generated extensions;
-- permissions, isolation runtimes, marketplaces, dependencies between extensions, and extension packaging;
+- permission systems, sandboxed extension runtimes, marketplaces, dependencies between extensions, and extension packaging;
 - multi-agent behavior;
 - a production build system or frontend framework.
 
@@ -83,6 +83,12 @@ All application URLs and imports must be relative so the same files work at the 
 - The same tests must cover a normal desktop viewport and a phone-sized viewport.
 - The page must fail visibly in its main shell if bootstrapping an extension fails; operational errors must not exist only in the console.
 - JavaScript source should remain usable under a strict Content Security Policy: no `eval()`, `new Function()`, inline event handlers, or `javascript:` URLs.
+
+## Extension runtime decision
+
+The extension/plugin system is based on **trusted same-realm ES modules**. Stage 0 built-ins and any later imported or generated extensions use this same runtime model.
+
+The public API limits supported coupling; it does not limit what extension code can technically access. There is no sandboxed or permission-restricted extension tier in this demo. Later user-supplied source must be reviewed and explicitly trusted before activation. See `docs/decisions/2026-08-13-trusted-same-realm-extensions.md`.
 
 ## Built-in loading
 
@@ -245,7 +251,7 @@ The prompt UI derives its credential control from the selected model’s public 
 - is not written to storage, URLs, logs, error messages, DOM attributes, or registry notifications;
 - is never exposed in public model descriptors.
 
-This is API-level least privilege, not code isolation. All trusted built-in ES modules and runtime dependencies execute in the page’s realm and can technically inspect page state. Imported or generated code will require a later trust/isolation design.
+This is API-level least privilege, not code isolation. All active extensions and runtime dependencies execute in the page’s realm and can technically inspect page state, including credentials. Later imported or generated extensions use the same full-authority model and therefore require source review and explicit trust before activation.
 
 ## UI contribution contract
 
