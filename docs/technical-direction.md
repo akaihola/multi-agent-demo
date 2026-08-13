@@ -1,492 +1,421 @@
-# Multi-Agent Demo: Initial Technical Direction
+# Multi-Agent Demo: Current Technical Direction
 
 ## Purpose
 
-This repository starts as a deliberately minimal proof of concept for a **static, browser-only chat application that can talk to different language models regardless of where they run**.
+This repository is a deliberately small proof of concept for a **static, browser-only application that can run a prompt against language models regardless of where they run**.
 
-The central experiment is simple:
+The initial demonstration is intentionally smaller than a chat application:
 
-> Can a user open a static web application, choose a model, and chat with it — where the model may either run locally in the browser or be provided by a remote LLM API using credentials supplied by the user — without the application having any backend of its own?
+> Open a static page, choose a model, enter one prompt, run it, and receive one response — with the model either running locally in the browser or provided by a remote LLM API using credentials supplied by the user.
 
-The proof of concept should answer that question with as little application-specific code and infrastructure as practical.
+The application has no backend of its own. It should remain easy to inspect, copy, self-host, modify, and understand.
 
-This is not initially an attempt to build a polished multi-provider AI application, an agent framework, or another OpenRouter. The interesting property is that the application itself can remain a set of static assets that anyone can download and serve themselves.
+Despite the repository's working name, **multi-agent behavior is explicitly out of scope for the initial demo**. It may be explored in a later version.
+
+Voice/audio interaction was also discussed and is now **explicitly dropped from the plan**. The project is text-only unless that decision is revisited much later.
 
 ## Core constraints
 
-The first prototype should preserve these constraints aggressively:
+Preserve these constraints aggressively:
 
 - **No application backend.** No proxy, serverless function, edge worker, token broker, or application server.
-- **Static deployment.** It should be possible to host the application on an ordinary static web server.
-- **Browser execution.** All application logic executes in the user's browser.
-- **Multiple model sources.** At least one browser-local model and more than one remote provider should ultimately be demonstrable.
-- **Bring your own credentials.** For remote providers, credentials belong to the user rather than to the deployed application.
-- **Minimal glue code.** Prefer established JavaScript libraries over writing and maintaining provider adapters ourselves.
-- **Minimal UI.** The POC only needs enough interface to choose a model/provider, enter credentials when necessary, submit a prompt, and see the response.
-- **No premature abstraction.** The POC should prove the concept before designing a comprehensive provider/plugin architecture.
+- **Static deployment.** GitHub Pages or any ordinary static web server should be sufficient.
+- **Browser execution.** Application logic executes in the user's browser.
+- **Browser-native implementation.** Prefer ordinary HTML, CSS, JavaScript, Web APIs, and ES modules.
+- **No mandatory build step unless a concrete dependency makes it worthwhile.**
+- **Multiple model sources.** Demonstrate more than one hosted provider and at least one browser-local model.
+- **Bring your own credentials.** Remote-provider credentials belong to the user, never to the deployed application.
+- **Minimal UI and minimal glue.**
+- **One prompt / one response first.** Do not begin with conversation state.
+- **No streaming initially.** Add it only after hosted multi-provider and browser-local model support work.
+- **No multi-agent orchestration in the initial demo.**
+- **Extension-first architecture.** Features that naturally fit the extension model should use the same public extension API as third-party extensions.
 
-## User experience to prove
+The last point supersedes the earlier "no premature plugin abstraction" rule. The extension mechanism is now itself one of the central experiments, but it must remain extremely small.
 
-A minimal interaction could be:
+## Guiding architecture: a tiny host plus extensions
 
-1. Open the static application.
-2. Choose a model from one selector.
-3. If it is a browser model, allow the application to download/load it.
-4. If it is a hosted model, ask for whatever credential or authorization that provider requires.
-5. Enter a message.
-6. Receive the model's response in the same chat interface.
-7. Switch to another model and repeat.
+The application should be divided conceptually into a **small trusted host** and **extensions**.
 
-The important conceptual point is that **local versus remote is a property of the selected model, not a different application mode**.
-
-## Architecture
-
-At its simplest:
+The host owns only capabilities that must exist in order for extensions to exist:
 
 ```text
-                    Static HTML application
-                            |
-                     common chat UI
-                            |
-                    model/provider layer
-                      /             \
-                     /               \
-          browser-local model       hosted model API
-             WebGPU/WASM              HTTPS/CORS
-                 |                        |
-          downloaded weights          user's API key
+Static application host
+  |
+  +-- extension discovery / loading / lifecycle
+  +-- extension registry
+  +-- tiny public host API
+  +-- permissions / trust boundary
+  +-- shared event mechanism
+  +-- extension persistence / import / export
+  +-- minimal shell / contribution points
+          |
+          +-- UI extensions
+          +-- model/provider extensions
+          +-- local-model extensions
+          +-- tool extensions
+          +-- diagnostics extensions
+          +-- future user/LLM-generated extensions
 ```
 
-There is deliberately no middle tier.
+The host should not become an internal application framework. Its job is to provide stable primitives and registration points.
+
+A useful design test is:
+
+> Could a built-in feature be removed from the repository and loaded as an ordinary extension without changing its implementation substantially?
+
+If yes, it probably belongs behind the extension API.
+
+## What should be extensions from the beginning?
+
+### Model/provider integrations
+
+Hosted providers are natural extensions. An extension can contribute one or more model definitions and the function used to invoke them.
+
+This means OpenAI, Anthropic, Google, OpenRouter, or a provider abstraction library can be integrated without teaching the core about each vendor.
+
+The provider bake-off remains useful: ClientAgentJS, Vercel AI SDK, BundleLLM, `@livx.cc/ask`, official SDKs, and plain `fetch()` can be evaluated as implementation strategies *inside* provider extensions rather than as architectures for the entire application.
+
+### Browser-local model runtimes
+
+WebLLM and/or Transformers.js should appear through the same model contribution surface where practical. Local versus hosted should be metadata/capability of a model, not a separate application mode.
+
+A local model extension may additionally expose loading progress, compatibility information, cache state, and model download size.
+
+### UI contributions
+
+The host should expose a very small number of deliberate UI contribution points rather than allowing arbitrary core DOM mutation as the primary API.
+
+Examples might eventually include:
+
+- main content/view;
+- settings section;
+- toolbar/action;
+- status/diagnostics panel.
+
+The initial prompt/result UI can itself be a built-in extension if this remains simple enough.
+
+### Tools
+
+Tools should use the extension mechanism from their first appearance. A tool extension contributes a name, description/schema, and implementation callable by a model or by the UI.
+
+This is deliberately postponed until after providers, local models, and streaming work.
+
+### Diagnostics and developer tooling
+
+Logging, request/event inspection, model metadata display, and an extension inspector are excellent extension candidates. They should not require special architecture in the core beyond the same event and contribution APIs available to other extensions.
+
+### Persistence-backed user extensions
+
+A later experimental feature may allow JavaScript extensions to be created at runtime, persisted in IndexedDB or localStorage, exported as text, and imported into another instance of the application.
+
+This creates the path to the more unusual experiment: allowing an LLM to inspect the application's documented extension API and generate a new extension for the user to review and activate.
+
+This is **not** the same as allowing the model to rewrite the trusted core. The preferred model is self-extension through a stable API, not unconstrained self-modification.
+
+## What should stay in the host?
+
+Keep the host intentionally boring. Likely host responsibilities are:
+
+- loading and unloading extensions;
+- validating extension metadata;
+- maintaining the registry of contributions;
+- handing each extension a constrained host API;
+- cleaning up registrations when an extension unloads;
+- routing host events;
+- persisting extension packages and enabled/disabled state;
+- importing/exporting extension packages;
+- enforcing whatever trust/permission model is practical;
+- providing a minimal DOM shell and named contribution points.
+
+Provider-specific behavior, tools, model catalogs, application commands, optional panels, and experiments should not accumulate in the host.
+
+## Extension API research direction
+
+We should **adopt established extension-system ideas rather than inventing an elaborate framework**.
+
+Useful reference architectures include:
+
+- **VS Code:** manifest + contribution points + activation + a stable host API. The useful idea is declarative contributions and a small activation lifecycle, not VS Code's enormous API or packaging machinery.
+- **Obsidian:** a straightforward plugin lifecycle where a plugin loads, registers capabilities/listeners, and unloads with cleanup. The useful idea is registration ownership and automatic cleanup.
+- **pluggy / pytest:** a tiny host/plugin distinction with explicit hook specifications and registered implementations. The useful idea is a deliberately narrow contract between host and plugins.
+- **Web platform primitives:** native ES modules, dynamic `import()`, `EventTarget`/`CustomEvent`, `AbortController`, Web Workers, sandboxed iframes, `postMessage`, IndexedDB, and the DOM should be preferred over creating equivalents.
+
+The likely shape is intentionally tiny, conceptually similar to:
+
+```js
+export const manifest = {
+  id: 'example.extension',
+  version: '0.1.0'
+};
+
+export function activate(api) {
+  const disposable = api.models.register({
+    id: 'example:model',
+    label: 'Example model',
+    generate: async ({ prompt }) => '...'
+  });
+
+  return () => disposable.dispose();
+}
+```
+
+This is a sketch, not yet a frozen API. The key ideas are:
+
+1. one obvious entry point;
+2. a tiny capability-oriented `api` object;
+3. explicit registration rather than monkey-patching;
+4. registrations return disposables/cleanup handles;
+5. unload is deterministic;
+6. the API can grow by adding namespaces/capabilities without exposing core internals.
+
+See `docs/extension-architecture.md` for the focused research and design criteria.
+
+## Security and trust boundary
+
+The extension idea changes the threat model substantially.
+
+### Built-in extensions
+
+Built-ins shipped with the static application are part of the trusted application distribution even though they use the public extension API.
+
+### Imported or LLM-generated extensions
+
+Arbitrary JavaScript running in the page's main realm can read DOM state, credentials, and other extension data. Therefore imported or generated extensions must **not** be described as sandboxed merely because they use an extension API.
+
+A later extension runtime should distinguish at least:
+
+- trusted built-in code;
+- explicitly user-trusted imported code;
+- untrusted/generated code that should ideally execute in a more constrained realm.
+
+Web Workers or sandboxed iframes plus message passing are likely candidates for genuinely untrusted extensions, but they restrict direct DOM access and complicate the API. That trade-off should be researched before runtime-generated JavaScript is enabled.
+
+Do not use `eval()` as the architecture. Dynamic execution may be an implementation detail for a trusted experimental mode, but the architecture should be based on extension packages, capabilities, and lifecycle.
+
+### Credentials
+
+Remote API keys should initially remain in memory. Never expose credentials through the generic extension API. Provider extensions should receive only the credentials/capabilities they require, and any future permission model should make this explicit.
 
 ## Browser-local models
 
-Modern browsers can run useful small language models locally, most interestingly through WebGPU. Model weights are downloaded to the user's machine and inference then happens locally.
+WebLLM remains the strongest first candidate for local inference because it is specifically designed for browser LLM execution with WebGPU, model loading/caching, and an OpenAI-like interface.
 
-Candidate libraries include:
+Transformers.js remains a useful alternative, particularly if the project later explores tasks beyond chat/text generation.
 
-### WebLLM
+A community Browser AI provider for Vercel AI SDK may allow local inference to sit behind the same abstraction as hosted models and remains worth a spike.
 
-[WebLLM](https://github.com/mlc-ai/web-llm) is the strongest starting candidate for the local-model side of the POC.
+For the POC, use a genuinely small quantized model. The goal is architectural proof, not frontier-model quality. On an ordinary laptop and roughly 100 Mbit/s connection, a first-load target comfortably below a minute strongly favors a download well below the theoretical ~750 MB/minute maximum.
 
-Advantages:
+## Hosted providers and BYOK
 
-- specifically designed for running LLMs in the browser;
-- WebGPU acceleration;
-- model loading/caching machinery already implemented;
-- streaming generation;
-- OpenAI-style chat-completions API, which may reduce glue code;
-- established project with a selection of preconfigured models.
+A backend-less application can call a hosted provider only where browser-originated requests and authentication are compatible with the browser security model.
 
-Disadvantages / questions:
+The initial approach is BYOK:
 
-- model downloads can still be hundreds of MB or several GB;
-- WebGPU/browser/hardware compatibility needs graceful handling;
-- first-load latency is fundamentally different from calling an API.
+1. choose provider/model;
+2. enter the user's credential if required;
+3. keep it in memory;
+4. send the request directly from browser to provider;
+5. display the response.
 
-For the POC, choose a genuinely small model. The goal is not to demonstrate frontier-model quality; it is to demonstrate that the same static UI can seamlessly address a model which exists entirely inside the browser.
+A static application cannot keep an application-owned secret. Browser compatibility must be tested with real requests; an SDK claiming browser compatibility does not automatically mean the provider's API supports the necessary CORS behavior.
 
-### Transformers.js
+OAuth/delegated authorization may be explored later where a provider genuinely supports an appropriate public-client flow.
 
-[Transformers.js](https://github.com/huggingface/transformers.js) is another important option. It is broader than WebLLM and can run many transformer architectures in-browser.
+## Provider abstraction bake-off
 
-Advantages:
+Do not prematurely choose the largest framework. Implement the same one-prompt/one-response provider extension using a few candidate approaches and compare the resulting code.
 
-- broad Hugging Face ecosystem;
-- supports many tasks beyond chat/LLMs;
-- WebGPU support;
-- useful if the project later grows beyond text generation.
+Primary candidates:
 
-For this particular POC, that generality may make WebLLM the simpler direct choice if all we need is chat.
+- **ClientAgentJS** — browser-first and direct-BYOK oriented;
+- **Vercel AI SDK** — mature common model APIs and potentially the cleanest route to both hosted and browser-local models;
+- **BundleLLM** — useful browser-native BYOK/OAuth comparison;
+- **`@livx.cc/ask`** — broad advertised provider coverage, pending real browser/CORS verification;
+- official provider SDKs — fallback;
+- plain `fetch()` — diagnostic baseline and fallback.
 
-### Browser AI provider for Vercel AI SDK
+Choose primarily on:
 
-A particularly interesting option is the community [Browser AI provider](https://ai-sdk.dev/providers/community-providers/browser-ai) for the Vercel AI SDK. It aims to expose browser inference engines such as WebLLM and Transformers.js through the same AI SDK model interface used for hosted providers.
+- static-browser compatibility;
+- no-build / browser-ESM friendliness;
+- amount of glue code;
+- hosted provider coverage;
+- fit with WebLLM/local inference;
+- error normalization;
+- streaming support for the later streaming stage;
+- package/dependency weight;
+- ease of wrapping as an extension without leaking library concepts into the host.
 
-If this works cleanly in a purely static browser application, it could eliminate a substantial part of the glue layer we originally expected to need. This deserves an early spike.
+## Staged implementation plan
 
-## Hosted providers directly from the browser
+Each stage should leave a small, runnable application. Introduce one major kind of complexity at a time.
 
-A backend-less application can only call a hosted model provider if the provider permits browser-originated requests and has an authentication mechanism compatible with public client code.
+### Stage 0 — Extension host walking skeleton
 
-There are two broad approaches.
+Build the smallest credible host and one built-in "hello" extension.
 
-### User-supplied API key (BYOK)
+Prove:
 
-The simplest POC experience is:
+- extension discovery/activation;
+- one registration API;
+- cleanup/unload;
+- a tiny contribution point;
+- Playwright can verify extension activation in a real browser.
 
-1. user chooses a provider;
-2. application asks for an API key;
-3. key exists only in the browser;
-4. browser sends requests directly to the provider.
+Do **not** solve runtime-generated extensions, permissions, marketplaces, dependency graphs, or sophisticated manifests here.
 
-This is intentionally different from embedding an application owner's API key in JavaScript. A static application **cannot keep a secret**. Any credential shipped with it must be considered public.
+### Stage 1 — One hosted model, one prompt, one response
 
-Even with BYOK, the UI should clearly explain that the key is being made available to JavaScript running on the page. For an initial POC, keeping the key only in memory is preferable to persisting it in `localStorage`.
+Add one provider/model as an extension.
 
-Some official SDKs deliberately make browser use opt-in because exposing an API key to browser code is dangerous in the usual application architecture. For example, the OpenAI JavaScript SDK has `dangerouslyAllowBrowser`, and Anthropic has an analogous browser opt-in. Those flags are warnings rather than security mechanisms.
+UI:
 
-For this project the distinction matters: **the user's own temporary BYOK key in a locally/self-hosted static application is a different threat model from a developer accidentally shipping their private production key to every visitor.** It still needs explicit warnings and careful handling.
+- provider/model selection only as needed;
+- API key input;
+- prompt textarea;
+- Run button;
+- result area;
+- loading and error state.
 
-### OAuth / delegated authorization
+No transcript. No conversation history. No streaming.
 
-OAuth or another delegated authorization flow would be preferable where a provider genuinely supports a browser/public-client flow for model API access. It avoids asking the user to paste a long-lived secret into the application and could potentially integrate with existing user entitlements.
+### Stage 2 — Multi-provider
 
-However, support varies considerably between providers and products. Consumer chat subscriptions generally should not be assumed to grant API access. Provider-by-provider research is needed before making OAuth part of the POC.
+Add a second hosted provider through the same extension surface and run the provider-abstraction bake-off.
 
-For the first implementation, BYOK is likely the shortest route to proving remote-provider access.
+This stage should prove that provider interchangeability is real rather than an interface designed around the first provider.
 
-## Provider abstraction: avoid writing it ourselves if possible
+### Stage 3 — Browser-local model
 
-The initial discussion started from the observation that all of the technical building blocks exist, so application code ought to be very small. The ideal dependency would provide roughly:
+Add one WebGPU/local model through the same model contribution API.
 
-```js
-const model = selectModel(...)
-const result = await model.generate(messages)
-```
+Prove:
 
-regardless of whether `model` ultimately means a browser-local WebGPU model or a hosted API.
+- compatibility detection;
+- model download/load progress;
+- local inference;
+- local and hosted models can be selected and invoked through the same user flow.
 
-Writing `fetch()` adapters for every provider would be straightforward, but it is not the interesting part of this project and would immediately create maintenance work. The POC should therefore test existing libraries rather than assuming Vercel AI SDK is the only candidate.
+### Stage 4 — Streaming
 
-## Browser-oriented multi-provider abstraction candidates
+Only now add streaming.
 
-This is an important part of the experiment. Several smaller projects are much closer to our exact architecture than the larger server/full-stack-oriented AI frameworks. They should be evaluated explicitly.
+Streaming should extend the existing invocation contract without forcing a redesign of providers or UI. This is an architectural test: if streaming requires bypassing the extension model, revisit the model API.
 
-### ClientAgentJS
+### Stage 5 — Simple tools
 
-[ClientAgentJS](https://github.com/FranBarInstance/ClientAgentJS) may be the closest conceptual match to this POC.
+Introduce a very small tool contribution API and one or two browser-native tools.
 
-It is deliberately designed as a plain browser-side JavaScript library for connecting directly to user-selected AI providers **without a backend**. Its author describes support for OpenAI, Anthropic, Google and local Ollama behind a unified interface, plus MCP support. It has no external dependencies or transpilation requirement and is intended to work from an ordinary web server or even `file://` where the target provider's CORS policy permits it.
+Good early tools are deterministic, understandable, and easy to test. Tools should be ordinary extensions and should use the same lifecycle/registration mechanism as providers and UI contributions.
 
-Particularly relevant details:
+This stage is where interactions can become more interesting without introducing multi-agent orchestration.
 
-- browser-first rather than server-first architecture;
-- unified provider interface;
-- BYOK is a primary use case rather than an escape hatch;
-- handles provider-specific browser details such as Anthropic's direct-browser-access header;
-- plain JavaScript and deliberately small deployment story;
-- local Ollama support provides another kind of local model, although it is not the same as in-browser WebGPU inference;
-- MCP support could become useful later, but is not needed for the POC.
+### Stage 6 — Conversation, only if useful
 
-Questions / limitations to investigate:
+If the experiments benefit from it, add conversation history and multi-turn state after the underlying model/tool architecture is proven.
 
-- exact current provider coverage and maintenance maturity;
-- whether OpenAI direct-browser access works with the current OpenAI API/SDK situation;
-- streaming and normalized error behavior;
-- how easy it is to add WebLLM as another provider;
-- whether its agent/MCP functionality adds unnecessary conceptual weight for a minimal chat demo.
+Conversation is not needed to prove the initial architectural idea.
 
-**POC relevance: very high.** This should be spiked alongside Vercel AI SDK rather than omitted in favor of the larger framework.
+### Later experiment — Portable and LLM-generated extensions
 
-### BundleLLM
+Only after the extension API is stable enough to be pleasant for humans:
 
-[BundleLLM](https://github.com/AlexanderDewhirst/bundle-llm-sdk) is another unusually close match. It was created as a browser SDK where the **user connects their own LLM provider** and chat traffic goes directly from browser to provider rather than through the application developer's backend.
+- store user extensions in IndexedDB/localStorage;
+- import/export extensions as text/packages;
+- allow copying an extension between app instances;
+- expose extension API documentation/source context to an LLM;
+- let the model propose extension code;
+- require explicit review/trust/activation;
+- investigate sandboxed execution for untrusted extensions.
 
-Its published design includes OpenRouter authorization via OAuth and Anthropic via a user-supplied API key, with an event-driven SDK and an optional ready-made widget/UI.
+The fun experiment is **an application that can extend itself through the same small public API used by its built-in features**, not a model with unrestricted access to rewrite the host.
 
-Why it is interesting here:
+## Testing strategy
 
-- browser/BYOK is the central architecture;
-- includes a delegated OAuth path, which is especially relevant to our earlier discussion about avoiding pasted API keys where possible;
-- can supply either SDK primitives or more UI out of the box;
-- proves that the browser-only provider model is useful enough to package as a reusable library.
+Use Playwright against the real static application.
 
-Questions / limitations:
+Early tests should focus on:
 
-- provider coverage is narrower than a general multi-provider framework;
-- OpenRouter OAuth introduces a provider/router dependency rather than direct access to every underlying vendor;
-- credentials are reportedly persisted in browser storage by default, whereas this POC may prefer memory-only keys initially;
-- it does not by itself solve in-browser WebGPU models, so WebLLM would still need integration beside or beneath it.
+- host loads;
+- built-in extensions activate;
+- registrations appear and disappear correctly;
+- one-prompt/one-response UI behavior;
+- provider selection and credential controls;
+- mocked provider responses and failures;
+- local-model capability fallback where practical;
+- mobile viewport behavior;
+- extension import/export later;
+- cleanup when extensions are disabled/reloaded.
 
-**POC relevance: high**, especially as a comparison point for the OAuth/BYOK user experience.
+Most tests should use fake providers/extensions so they are deterministic and free. Keep only a very small optional suite for real provider APIs if it proves valuable.
 
-### `@livx.cc/ask`
+Voice/audio tests are unnecessary because voice is no longer in scope.
 
-[`@livx.cc/ask`](https://www.npmjs.com/package/@livx.cc/ask) describes itself as a multi-LLM interface with a browser-compatible client-side SDK. It supports a much broader list of hosted providers (including OpenAI, Anthropic, Google, Groq, Mistral, OpenRouter, Cohere, xAI, DeepSeek, AI21 and Cloudflare) through a unified interface.
+## Repository structure
 
-Why it is worth checking:
+Do not interpret "Simon-style" as "everything must stay in one HTML file". Start with the smallest structure, but this project has natural module boundaries and may move to multiple native ES modules early without introducing a bundler.
 
-- broad provider coverage;
-- explicitly advertises client-side SDK use;
-- streaming and non-streaming support;
-- may demonstrate how little provider-selection glue our POC actually needs.
-
-Questions:
-
-- whether each advertised provider is truly callable directly from a static browser under current CORS policies, as opposed to the package merely being browser-compatible when pointed at an intermediary;
-- package size and dependency footprint;
-- whether its broader CLI/server feature set makes it unnecessarily large for this project.
-
-**POC relevance: medium/high pending a browser-only test.**
-
-### Vercel AI SDK
-
-[Vercel AI SDK](https://ai-sdk.dev/) remains the most mature general abstraction to investigate.
-
-Why it is attractive:
-
-- common APIs for multiple model providers;
-- official/community provider packages;
-- streaming and message abstractions already solved;
-- supports major hosted providers;
-- Browser AI provider may bring WebLLM/Transformers.js under the same abstraction;
-- potentially allows the actual application to remain extremely small.
-
-Questions to answer with a spike:
-
-- Can the relevant AI SDK pieces run cleanly in a static browser build without any server-side runtime assumptions?
-- Which provider packages themselves permit browser execution?
-- How much bundling/build tooling is required?
-- Does Browser AI behave similarly enough to hosted providers for the common chat path to remain genuinely simple?
-- Does the resulting bundle remain reasonable for a deliberately tiny demo?
-
-The AI SDK is often demonstrated in full-stack applications, so we should verify browser-only behavior rather than infer it from server-oriented examples.
-
-**POC relevance: very high**, especially because it may be the only candidate in this list that can naturally put hosted providers and WebGPU models behind essentially the same abstraction.
-
-### Other multi-provider libraries and frameworks
-
-There are many broader abstractions — for example LangChain.js and numerous OpenAI-compatible clients — but most are not optimized for this project's unusual combination of **static-only + direct browser BYOK + local WebGPU**. Gateways such as LiteLLM, OpenRouter, Portkey and similar systems solve multi-provider routing very effectively, but introduce a server/gateway intermediary and therefore do not prove the architectural point of this POC.
-
-They remain useful reference designs, but should not be mistaken for drop-in solutions to the strict no-backend requirement.
-
-The search for smaller browser-first libraries should remain open. ClientAgentJS and BundleLLM are evidence that this niche is active and that choosing only the largest mainstream abstraction would be premature.
-
-## Abstraction comparison for the POC
-
-| Candidate | Browser-first | Multiple hosted providers | Direct BYOK | OAuth option | Browser-local WebGPU | Fit for tiny static POC |
-| --- | --- | --- | --- | --- | --- | --- |
-| ClientAgentJS | Yes | Yes | Yes | Not primary | Not currently the core feature | **Very high** |
-| BundleLLM | Yes | Limited / via OpenRouter | Yes | Yes, OpenRouter | No | **High** |
-| `@livx.cc/ask` | Advertised | Yes, broad | Needs verification per provider | Not central | No | **Medium/high** |
-| Vercel AI SDK | Not specifically | Yes, broad | Possible, browser behavior must be verified | Provider-dependent | Yes via Browser AI provider | **Very high** |
-| Official provider SDKs | Provider-specific | No | Often possible with explicit browser opt-in | Provider-dependent | No | Medium fallback |
-| Plain `fetch()` | Yes | Only what we implement | Yes where CORS allows | We implement it | No | Low as abstraction, high as diagnostic fallback |
-
-This table describes architectural fit, not a final library choice. A short implementation spike is more valuable than deciding from documentation alone.
-
-## Direct official SDKs
-
-A fallback is to use official provider SDKs directly in the browser where supported, for example OpenAI or Anthropic with their explicit browser opt-ins.
-
-Advantages:
-
-- little uncertainty about provider-specific features;
-- less abstraction to debug;
-- easy to understand during a proof of concept.
-
-Disadvantages:
-
-- application owns the normalization layer;
-- adding providers creates more glue code;
-- streaming/error handling/model naming differ;
-- browser-local models become a separate integration path.
-
-This is a good fallback but not the preferred first architecture if an existing common abstraction works.
-
-## Plain `fetch()`
-
-Calling provider REST APIs directly is the lowest-level fallback.
-
-It has essentially zero dependency cost and makes CORS behavior obvious, but it maximizes provider-specific application code. It therefore works against the goal of demonstrating how little glue is necessary.
-
-Use it for diagnosis or for a provider whose SDK causes browser problems, not as the default architecture.
-
-## Candidate first implementation
-
-Rather than prematurely selecting Vercel AI SDK, the first technical work should be a **small bake-off**. Implement the same trivial one-turn chat path with the smallest possible code using:
-
-1. **ClientAgentJS** for hosted direct-BYOK providers;
-2. **Vercel AI SDK** for hosted providers, and test its Browser AI provider with WebLLM;
-3. **BundleLLM** to evaluate its browser-native BYOK/OAuth experience;
-4. optionally **`@livx.cc/ask`** if its direct-browser claims survive a quick CORS test.
-
-The winner should be determined primarily by how much application-specific code and machinery it requires under the strict static-only constraint, not by framework popularity.
-
-An especially attractive outcome would be:
+A likely shape is:
 
 ```text
-Static app
-  |
-  +-- one common model API
-        |
-        +-- hosted provider A (BYOK)
-        +-- hosted provider B (BYOK/OAuth)
-        +-- browser-local provider
-                |
-                +-- WebLLM
+multi-agent-demo/
+├── index.html
+├── app.js
+├── host/
+│   ├── extensions.js
+│   └── ...                 # only when genuinely needed
+├── extensions/
+│   ├── prompt-ui.js
+│   ├── provider-*.js
+│   └── local-*.js
+├── docs/
+│   ├── technical-direction.md
+│   ├── simon-willison-html-tool-guidelines.md
+│   └── extension-architecture.md
+└── tests/
 ```
 
-If no existing abstraction handles both sides elegantly, the next-best architecture is still small:
+Keep files coarse-grained. Splitting into ES modules is for clarity, not an invitation to recreate a framework directory tree.
 
-```text
-Static app
-  |
-  +-- browser-first multi-provider library --> hosted providers
-  |
-  +-- WebLLM -------------------------------> browser model
-```
+## Explicitly out of scope for the initial demo
 
-Only if those approaches prove awkward should we fall back to official provider SDKs or tiny handwritten adapters.
-
-## Suggested POC scope
-
-The first working version should resist feature creep. A reasonable target is one page containing:
-
-- model/provider selector;
-- API-key or authorization control shown only when required;
-- tiny transcript area;
-- prompt input;
-- Send button;
-- loading/model-download status;
-- streamed output if it comes essentially for free from the selected library.
-
-A good initial model matrix would be:
-
-| Source | Purpose |
-| --- | --- |
-| One small WebLLM model | Prove fully local browser inference |
-| Anthropic | Prove direct hosted-provider BYOK |
-| OpenAI, Google, OpenRouter, or another browser-capable provider | Prove that hosted providers are interchangeable |
-
-Exact providers and model names should be selected during implementation based on current browser/CORS support rather than hard-coded into the architecture document.
-
-## What the POC intentionally does not need
-
-Do not initially add:
-
+- voice/audio;
+- multiple agents;
+- agent orchestration/delegation;
 - backend services;
-- accounts;
-- database or conversation persistence;
-- complex settings;
-- our own provider plugin framework;
-- agent/tool execution;
-- MCP;
+- accounts/database;
 - RAG;
-- authentication owned by this application;
-- automatic provider/model discovery;
-- sophisticated key management;
-- production security guarantees;
-- elaborate styling;
-- a generalized framework intended for npm publication.
-
-Those may become interesting later, but they obscure the experiment now.
-
-## Static HTML does not necessarily mean zero build step
-
-There are two separate goals which should not be conflated:
-
-1. **The deployed application is static and needs no backend.**
-2. **The source consists of one hand-written HTML file with CDN script tags and no build tooling.**
-
-The first is a core requirement. The second is optional.
-
-ClientAgentJS is interesting partly because it aims at plain JavaScript with no transpilation. Conversely, if Vite or another tiny build setup makes npm dependencies, workers, and WebGPU libraries dramatically easier to use, that is also a reasonable trade. The output can still be ordinary static HTML/JS/CSS deployable anywhere.
-
-For the earliest experiment, prefer the smallest setup that the chosen libraries support reliably.
-
-## Security model
-
-A browser-only BYOK application makes several security properties unusually visible.
-
-### There are no application secrets
-
-Anything included in the static deployment is public. Never include an application-owned provider key.
-
-### User keys are exposed to the page
-
-A pasted API key can be read by JavaScript executing in that page. This makes dependency integrity and XSS important even for a small demo.
-
-The initial version should therefore:
-
-- keep keys in memory where practical;
-- avoid analytics and unrelated third-party scripts;
-- avoid logging credentials;
-- avoid transmitting keys anywhere except the selected provider;
-- clearly tell the user what will happen;
-- make source code small enough to inspect easily.
-
-A self-hosted/downloadable application has a useful property here: technically inclined users can inspect exactly what they are running.
-
-### CORS is not a security mechanism for the key
-
-CORS determines whether browser JavaScript can read a provider's response. It does not make a key embedded in a static app secret.
-
-## Model download target
-
-One motivating constraint discussed for local inference was an ordinary Windows laptop and roughly a 100 Mbit/s connection, with a desirable initial model download of under about one minute.
-
-At 100 Mbit/s the theoretical maximum transferred in one minute is about 750 MB; real-world throughput and model initialization reduce the practical budget. This points toward a small quantized model rather than the multi-billion-parameter models often used in WebLLM demos.
-
-For the POC, responsiveness and accessibility matter more than model quality. We can later expose larger local models as optional choices.
+- MCP unless a later tool experiment specifically justifies it;
+- sophisticated persistent chat history;
+- production-grade secret management;
+- extension marketplace/discovery service;
+- extension dependency resolution;
+- automatic execution of arbitrary LLM-generated code;
+- polished design system;
+- packaging this as a generalized npm framework.
 
 ## Questions the prototype should answer
 
-The prototype is successful if it gives concrete answers to these questions:
-
-1. Can one static application genuinely support both browser-local and remote hosted LLMs?
-2. Which mainstream providers can currently be called directly from browsers?
-3. How safe and understandable can BYOK be made without a backend?
-4. Which existing browser-capable multi-provider library minimizes our own glue code?
-5. Can the same abstraction include WebGPU inference, or is a tiny two-path architecture cleaner?
-6. How small can the application-specific code actually become?
-7. What is the smallest local model that still makes the demo feel useful on an average laptop?
-8. Are browser compatibility and CORS limitations small enough that this is useful beyond a technical demo?
-
-## First milestone
-
-The first milestone should be intentionally narrow:
-
-> **A static page where a user can select either one local WebGPU model or one hosted model, type a message, and receive a response through the same UI.**
-
-Implementation order:
-
-1. Establish the smallest static project/build setup.
-2. Run a tiny hosted-provider bake-off: ClientAgentJS vs Vercel AI SDK, with BundleLLM and `@livx.cc/ask` as additional candidates.
-3. Spike Browser AI/WebLLM and make one small local model answer a prompt.
-4. Choose the abstraction based on actual browser-only simplicity rather than ecosystem size.
-5. Put one local and one hosted model behind one selector and one chat path.
-6. Add a second hosted provider to verify that the abstraction is genuinely reusable.
-7. Measure the amount of application-specific code and simplify it.
-
-Only after this works should we decide whether the experiment deserves a reusable architecture or a real product name.
-
-## Naming
-
-`multi-agent-demo` is intentionally a working repository name, not a product decision.
-
-Names explored during brainstorming included concepts around:
-
-- `omni`, `any`, `one`, and `poly`;
-- models, minds, assistants, and agents;
-- plugging, routing, gates, bridges, docks, and multiplexing;
-- `OmniMux` and `AI Mux`;
-- science-fiction-inspired terminology.
-
-None felt compelling enough to justify choosing a permanent name before the technical idea is proven. Keeping the working name boring is therefore a feature rather than a problem.
-
-## Longer-term possibilities
-
-If the POC works unusually well, several directions become interesting:
-
-- a tiny reusable browser library exposing local and remote models uniformly;
-- more providers and local runtimes;
-- OAuth/delegated provider authentication where genuinely available;
-- model capability metadata and filtering;
-- installable/PWA operation;
-- fully offline mode for local models;
-- local conversation storage;
-- user-defined providers compatible with OpenAI-style APIs;
-- agent/tool support;
-- a polished self-hostable universal LLM chat client.
-
-Those are deliberately possibilities, not current requirements.
+1. Can a tiny static host support useful features almost entirely through one understandable extension API?
+2. Which responsibilities truly must remain in the host?
+3. Can hosted and browser-local models share one model contribution contract?
+4. Which browser-capable provider library minimizes glue without infecting the host API with its own abstractions?
+5. Can streaming be added later without redesigning the non-streaming model contract?
+6. Can tools be added as ordinary extensions?
+7. Is the extension API small enough that a human can understand it in minutes and an LLM can generate correct extensions from a short specification?
+8. What isolation model is practical for imported/generated JavaScript extensions?
+9. How small can the total application-specific code remain?
 
 ## Guiding principle
 
-The project should optimize for one surprising demonstration:
+The project should optimize for two surprising demonstrations, in order:
 
-> **One tiny static web application, no backend, one chat interface — choose an LLM wherever it happens to live.**
+> **One tiny static web application, no backend — choose an LLM wherever it happens to live.**
 
-If the implementation becomes complicated before proving that statement, simplify it.
+Then, if the extension experiment succeeds:
+
+> **Almost everything in that application is an extension using the same tiny public API — including extensions the user can eventually import, export, or ask a model to create.**
+
+If either demonstration requires a complicated framework before it works, simplify the architecture.
