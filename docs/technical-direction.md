@@ -127,7 +127,7 @@ For v0, host responsibilities are limited to:
 - cleaning up registrations deterministically when an extension unloads;
 - providing a minimal DOM shell and the named `main` contribution point.
 
-Persistence, import/export, user-extension enablement, permission prompts, and isolated runtimes are possible **later host responsibilities**, not v0 work.
+Persistence, import/export, user-extension enablement, trust warnings, and provenance display are possible **later host responsibilities**, not v0 work. A sandboxed extension runtime is not planned for this demo.
 
 Provider-specific behavior, tools, model catalogs, application commands, optional panels, and experiments should not accumulate in the host.
 
@@ -140,7 +140,7 @@ Useful reference architectures include:
 - **VS Code:** manifest + contribution points + activation + a stable host API. The useful idea is declarative contributions and a small activation lifecycle, not VS Code's enormous API or packaging machinery.
 - **Obsidian:** a straightforward plugin lifecycle where a plugin loads, registers capabilities/listeners, and unloads with cleanup. The useful idea is registration ownership and automatic cleanup.
 - **pluggy / pytest:** a tiny host/plugin distinction with explicit hook specifications and registered implementations. The useful idea is a deliberately narrow contract between host and plugins.
-- **Web platform primitives:** native ES modules, dynamic `import()`, `EventTarget`/`CustomEvent`, `AbortController`, Web Workers, sandboxed iframes, `postMessage`, IndexedDB, and the DOM should be preferred over creating equivalents.
+- **Web platform primitives:** native ES modules and dynamic `import()` for trusted extension loading, `EventTarget`/`CustomEvent`, `AbortController`, IndexedDB, and the DOM should be preferred over creating equivalents. A model runtime may use a Worker internally, but Workers and iframes are not the extension isolation boundary.
 
 The likely shape is intentionally tiny, conceptually similar to:
 
@@ -172,33 +172,28 @@ This is a sketch, not yet a frozen API. The key ideas are:
 
 See `docs/extension-architecture.md` for the focused research and design criteria.
 
-## Security and trust boundary
+## Trust model
 
-The extension idea changes the threat model substantially.
+The demo deliberately uses **trusted same-realm ES modules** for all extensions. This is an architectural decision, recorded in `docs/decisions/2026-08-13-trusted-same-realm-extensions.md`, not an unresolved security experiment.
 
-### Built-in extensions
+Built-ins, imported extensions, generated extensions, and their dependencies execute with the page's effective authority. They can inspect or modify the DOM and JavaScript state, make network requests, monkey-patch globals, and potentially read in-page credentials. The public extension API is a maintainability boundary, not a security boundary.
 
-Built-ins shipped with the static application are part of the trusted application distribution even though they use the public extension API.
+Consequently:
 
-### Imported or LLM-generated extensions
+- built-ins are trusted as part of the application distribution;
+- imported extensions must be treated like installing executable code;
+- LLM-generated extensions must be shown for review and explicitly trusted before activation;
+- the demo must never describe an active extension as sandboxed or permission-restricted;
+- the demo does not support an “untrusted extension” tier;
+- automatic activation of generated or imported code is prohibited.
 
-Arbitrary JavaScript running in the page's main realm can read DOM state, credentials, and other extension data. Therefore imported or generated extensions must **not** be described as sandboxed merely because they use an extension API.
-
-A later extension runtime should distinguish at least:
-
-- trusted built-in code;
-- explicitly user-trusted imported code;
-- untrusted/generated code that should ideally execute in a more constrained realm.
-
-Web Workers or sandboxed iframes plus message passing are likely candidates for genuinely untrusted extensions, but they restrict direct DOM access and complicate the API. That trade-off should be researched before runtime-generated JavaScript is enabled.
-
-Do not use `eval()` as the architecture. Dynamic execution may be an implementation detail for a trusted experimental mode, but the architecture should be based on extension packages, capabilities, and lifecycle.
+Do not use `eval()` or `new Function()` as the plugin system. Load trusted code as ES modules; later portable source may be loaded through a deliberately designed module-import path.
 
 ### Credentials
 
 Remote API keys should initially remain in memory. Never expose credentials through the generic extension API. The prompt UI passes a credential only when invoking the selected model; the host routes it to that model's implementation and never places it in registry descriptors, events, storage, URLs, or logs. The exact v0 invocation contract is defined in `docs/implementation-contract-v0.md`.
 
-This is API-level discipline, not a same-realm security boundary. Trusted built-in modules and loaded third-party dependencies execute in the same page and can technically inspect DOM and JavaScript state. Real isolation for imported code is later research.
+These practices reduce accidental exposure through the public API, but they cannot hide a credential from other active same-realm code. Users must activate only extensions and dependencies they trust.
 
 ## Browser-local models
 
@@ -339,7 +334,7 @@ Only after the extension API is stable enough to be pleasant for humans:
 - expose extension API documentation/source context to an LLM;
 - let the model propose extension code;
 - require explicit review/trust/activation;
-- investigate sandboxed execution for untrusted extensions.
+- load the proposed extension as a trusted same-realm ES module only after explicit review and activation.
 
 The fun experiment is **an application that can extend itself through the same small public API used by its built-in features**, not a model with unrestricted access to rewrite the host.
 
@@ -401,6 +396,7 @@ Keep files coarse-grained. Splitting into ES modules is for clarity, not an invi
 - extension marketplace/discovery service;
 - extension dependency resolution;
 - automatic execution of arbitrary LLM-generated code;
+- sandboxed or permission-restricted extension runtimes;
 - polished design system;
 - packaging this as a generalized npm framework.
 
@@ -412,7 +408,7 @@ Keep files coarse-grained. Splitting into ES modules is for clarity, not an invi
 4. Which browser-capable provider library minimizes glue without infecting the host API with its own abstractions?
 5. Can tools and their transient invocation loops be added as ordinary extensions without requiring retained conversation state?
 6. Is the extension API small enough that a human can understand it in minutes and an LLM can generate correct extensions from a short specification?
-7. What isolation model is practical for imported/generated JavaScript extensions?
+7. Can review, provenance, and explicit activation make the full-authority trust model understandable enough for imported/generated extensions?
 8. How small can the total application-specific code remain?
 
 ## Guiding principle
